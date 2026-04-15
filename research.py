@@ -181,5 +181,30 @@ def run():
     print(f"\nSaved {len(all_results)} total items to {output_file}")
 
 
+
+    # Trigger deep research for any new StashIt items
+    if stashit:
+        print("\nRunning deep research on new StashIt items...")
+        import subprocess, hashlib as _hash
+        from pathlib import Path as _Path
+        for item in stashit:
+            # Use a hash of the URL as the item ID when no Convex ID is available
+            item_id = _hash.md5(item["url"].encode()).hexdigest()[:16]
+            research_file = _Path(__file__).parent / "data" / "deep_research" / f"{item_id}.json"
+            if not research_file.exists():
+                title = item.get("title", "")
+                note = ""
+                summary = item.get("summary", "")
+                m = re.search(r"\[Mike note: (.+?)\]", summary)
+                if m: note = m.group(1)
+                print(f"  Deep researching: {(title or item['url'])[:60]}")
+                subprocess.run([
+                    str(_Path(__file__).parent / "venv" / "bin" / "python"),
+                    str(_Path(__file__).parent / "deep_research.py"),
+                    item_id, item["url"], "--title", title, "--note", note,
+                ], timeout=120)
+
 if __name__ == "__main__":
+
+    run()
     run()

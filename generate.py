@@ -18,6 +18,7 @@ from config import (
 )
 
 EPISODES_DIR.mkdir(parents=True, exist_ok=True)
+DEEP_RESEARCH_DIR = Path(__file__).parent / "data" / "deep_research"
 WWW_DIR.mkdir(parents=True, exist_ok=True)
 
 # Topics to skip — enterprise fluff that Mike doesn't care about
@@ -56,7 +57,7 @@ def pick_top_stories(topics: list, n: int = 12) -> dict:
     by_topic = {
         "AI and large language models": [],
         "tech industry and software development": [],
-        "crypto and web3": [],
+        "crypto and web3": [],  # capped at 1 below
         "Australian tech news": [],
         "stashit_read": [],
         "mike_blog": [],
@@ -75,7 +76,8 @@ def pick_top_stories(topics: list, n: int = 12) -> dict:
 
     # Cap each category
     for k in by_topic:
-        by_topic[k] = by_topic[k][:4]
+        cap = 1 if k == "crypto and web3" else 4
+        by_topic[k] = by_topic[k][:cap]
 
     return by_topic
 
@@ -136,6 +138,32 @@ def build_content_string(by_topic: dict) -> str:
                 lines.append(f"Summary: {summary[:300]}")
             if note:
                 lines.append(f"Mike's note when reading this: \"{note}\"")
+
+            # Inject deep research brief for StashIt items
+            if topic_key == "stashit_read":
+                import hashlib as _h
+                item_id = _h.md5(s.get("url", "").encode()).hexdigest()[:16]
+                rf = DEEP_RESEARCH_DIR / f"{item_id}.json"
+                if rf.exists():
+                    research = json.loads(rf.read_text())
+                    a = research.get("analysis", {})
+                    lines.append("[DEEP RESEARCH BRIEF — use this for a substantive discussion]")
+                    if a.get("one_sentence_summary"):
+                        lines.append(f"What it's actually about: {a['one_sentence_summary']}")
+                    if a.get("answer_to_mike"):
+                        lines.append(f"Answer to Mike's question: {a['answer_to_mike']}")
+                    for insight in a.get("key_insights", [])[:3]:
+                        lines.append(f"- Key insight: {insight}")
+                    for counter in a.get("counterarguments", [])[:2]:
+                        lines.append(f"- Counterargument: {counter}")
+                    if a.get("implications_for_developers"):
+                        lines.append(f"For developers: {a['implications_for_developers']}")
+                    for q in a.get("interesting_questions_to_explore", [])[:2]:
+                        lines.append(f"- Good question to explore: {q}")
+                    lines.append("[END DEEP RESEARCH]")
+                else:
+                    lines.append("[Note: no deep research available yet for this item]")
+
             lines.append(f"URL: {s.get('url', '')}")
             lines.append("")
 

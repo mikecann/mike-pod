@@ -57,6 +57,7 @@ def run():
 
     import os
     os.environ["OPENAI_API_KEY"] = OPENAI_API_KEY
+    os.environ["PATH"] = "/opt/homebrew/bin:" + os.environ.get("PATH", "")
 
     today = date.today().isoformat()
     mp3_name = f"{today}-episode.mp3"
@@ -80,6 +81,8 @@ def run():
         audio_file = generate_podcast(
             text=content,
             tts_model="openai",
+            llm_model_name="gpt-4o",
+            api_key_label="OPENAI_API_KEY",
             longform=EPISODE_TARGET_MINUTES > 10,
         )
         shutil.copy(audio_file, mp3_path)

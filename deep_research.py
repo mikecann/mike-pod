@@ -168,7 +168,7 @@ Return a JSON object with these exact keys:
 Be direct, specific, and opinionated. Avoid vague statements like "it depends" or "there are pros and cons." Give actual analysis."""
 
     response = client.chat.completions.create(
-        model="gpt-4o",
+        model="gpt-5.4",
         messages=[{"role": "user", "content": prompt}],
         temperature=0.7,
         response_format={"type": "json_object"},

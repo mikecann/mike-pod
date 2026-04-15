@@ -239,7 +239,7 @@ def run():
         audio_file = generate_podcast(
             text=content,
             tts_model="openai",
-            llm_model_name="gpt-4o",
+            llm_model_name="gpt-5.4",
             api_key_label="OPENAI_API_KEY",
             conversation_config=conversation_config,
             longform=EPISODE_TARGET_MINUTES > 10,

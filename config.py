@@ -17,7 +17,7 @@ PODCAST_TITLE = "Mike's Weekly Briefing"
 PODCAST_DESCRIPTION = "A weekly AI-generated conversational podcast covering AI, tech, crypto, and Australian news — curated to Mike's interests."
 PODCAST_AUTHOR = "Mike Cann"
 PODCAST_EMAIL = "mike.cann@gmail.com"
-BASE_URL = "http://100.109.98.30/podcast"  # Tailscale IP — update to Funnel URL when configured
+BASE_URL = "https://bruce.tail9ef766.ts.net/podcast"  # Tailscale IP — update to Funnel URL when configured
 
 # --- Content Settings ---
 INTERESTS = [

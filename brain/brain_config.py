@@ -1,0 +1,6 @@
+CHROMA_PATH = "/Users/bruce/mike-pod/data/chroma_db"
+COLLECTION_NAME = "second_brain"
+OLLAMA_EMBED_MODEL = "nomic-embed-text"
+OLLAMA_VISION_MODEL = "moondream"
+WHISPER_MODEL = "medium"
+BRAIN_DATA_DIR = "/Users/bruce/mike-pod/data/brain"

@@ -50,7 +50,15 @@ def build_feed():
         ET.SubElement(item, "guid", isPermaLink="false").text = ep["filename"]
         ET.SubElement(item, "enclosure",
                        url=mp3_url, length=str(size), type="audio/mpeg")
-        ET.SubElement(item, "itunes:duration").text = "00:15:00"
+        duration_seconds = ep.get("duration_seconds")
+        if duration_seconds:
+            duration_seconds = int(duration_seconds)
+            hours, rem = divmod(duration_seconds, 3600)
+            minutes, seconds = divmod(rem, 60)
+            duration_text = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+        else:
+            duration_text = "00:15:00"
+        ET.SubElement(item, "itunes:duration").text = duration_text
 
     tree = ET.ElementTree(rss)
     ET.indent(tree, space="  ")

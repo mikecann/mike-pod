@@ -2,3 +2,4 @@ podcastfy
 requests
 feedgen
 python-dateutil
+beautifulsoup4

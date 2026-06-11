@@ -6,3 +6,8 @@ data/topics/
 data/episodes/
 data/transcripts/
 data/audio/
+data/brain/
+data/chroma_db/
+data/automation/
+data/deep_research/
+logs/

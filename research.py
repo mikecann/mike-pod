@@ -9,27 +9,53 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from email.utils import parsedate_to_datetime
 
+import re
 import requests
 from config import BLOG_RSS_URL, TOPICS_DIR
 
 TOPICS_DIR.mkdir(parents=True, exist_ok=True)
 
+# Curated from the Daily Brief RSS pool, then narrowed for mike-pod.
+# Principle: fewer generic business feeds, more primary/expert/developer sources.
+# Crypto/Web3 is intentionally not a default feed category; it should only appear
+# through StashIt/Mike-interest items or genuinely mainstream tech coverage.
 FEEDS = {
     "AI and large language models": [
-        "https://feeds.feedburner.com/AITrends",
-        "https://www.artificialintelligence-news.com/feed/",
+        # Primary / research / expert sources
+        "https://openai.com/news/rss.xml",
+        "https://blog.google/technology/ai/rss/",
+        "https://huggingface.co/blog/feed.xml",
+        "https://simonwillison.net/atom/everything/",
+        "https://www.latent.space/feed",
+        "https://jack-clark.net/feed/",
+        "https://thegradient.pub/rss/",
+        "https://bair.berkeley.edu/blog/feed.xml",
+        # Reporting, but AI-specific rather than generic business firehose
+        "https://www.technologyreview.com/topic/artificial-intelligence/feed",
+        "https://techcrunch.com/category/artificial-intelligence/feed/",
+        "https://the-decoder.com/feed/",
+        "https://spectrum.ieee.org/feeds/topic/artificial-intelligence.rss",
     ],
     "tech industry and software development": [
-        "https://feeds.arstechnica.com/arstechnica/technology-lab",
-        "https://techcrunch.com/feed/",
+        # Developer/platform/security sources with practical angles
+        "https://feeds.arstechnica.com/arstechnica/index",
+        "https://www.theregister.com/headlines.atom",
+        "https://stackoverflow.blog/feed/",
+        "https://github.blog/feed/",
+        "https://blog.cloudflare.com/rss/",
         "https://news.ycombinator.com/rss",
-    ],
-    "crypto and web3": [
-        "https://www.coindesk.com/arc/outboundfeeds/rss/",
-        "https://cointelegraph.com/rss",
+        "https://lobste.rs/rss",
+        "https://feeds.feedburner.com/TheHackersNews",
+        "https://www.schneier.com/feed/atom/",
+        "https://krebsonsecurity.com/feed/",
     ],
     "Australian tech news": [
-        "https://www.abc.net.au/news/feed/51120/rss.xml",
+        # Tech-specific Australian sources; avoid broad ABC general-news leakage.
+        "https://www.itnews.com.au/rss/rss.ashx",
+        "https://www.innovationaus.com/feed/",
+        "https://www.startupdaily.net/feed/",
+        "https://www.smartcompany.com.au/startupsmart/feed/",
+        "https://www.smartcompany.com.au/technology/feed/",
     ],
 }
 
@@ -205,6 +231,4 @@ def run():
                 ], timeout=120)
 
 if __name__ == "__main__":
-
-    run()
     run()

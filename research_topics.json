@@ -1,0 +1,75 @@
+{
+  "enduring_interests": [
+    {
+      "id": "quantum-physics",
+      "topic": "Quantum physics",
+      "angles": [
+        "What is experimentally established?",
+        "Which interpretations make different testable predictions?",
+        "Where does information become a useful physical concept rather than an analogy?"
+      ]
+    },
+    {
+      "id": "wolfram-physics",
+      "topic": "Wolfram physics and ruliology",
+      "angles": [
+        "What would make the programme falsifiable?",
+        "Which results are formal mathematics and which are claims about our universe?",
+        "How does causal invariance relate to known physics?"
+      ]
+    },
+    {
+      "id": "quantum-computation",
+      "topic": "Quantum computation",
+      "angles": [
+        "Which advantages have been demonstrated outside toy problems?",
+        "What does error correction cost in practice?",
+        "What can quantum computing teach us about physical computation?"
+      ]
+    },
+    {
+      "id": "low-level-computation",
+      "topic": "Low-level computation and systems",
+      "angles": [
+        "How do abstractions map onto hardware?",
+        "Where do performance claims survive realistic workloads?",
+        "Which old systems ideas are becoming newly relevant?"
+      ]
+    },
+    {
+      "id": "biology",
+      "topic": "Biology, evolution and collective intelligence",
+      "angles": [
+        "How can goal-directed behaviour emerge without a central controller?",
+        "What mechanisms connect computation, development and evolution?",
+        "Which striking claims have strong experimental support?"
+      ]
+    },
+    {
+      "id": "history-warfare",
+      "topic": "History, warfare and military technology",
+      "angles": [
+        "How did logistics, institutions and technology interact?",
+        "Which popular explanations fail when primary sources are examined?",
+        "What recurring patterns are real and which are hindsight?"
+      ]
+    },
+    {
+      "id": "space",
+      "topic": "Space science and exploration",
+      "angles": [
+        "Which missions can settle an important open question?",
+        "What engineering constraint is hidden by the headline?",
+        "Where is the evidence genuinely surprising?"
+      ]
+    }
+  ],
+  "active_prompts": [
+    {
+      "id": "wolfram-evidence-pilot",
+      "topic": "What would actually count as evidence that Wolfram's computational physics programme describes our universe, and where does quantum computation fit?",
+      "status": "published",
+      "published_episode": 1
+    }
+  ]
+}

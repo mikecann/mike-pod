@@ -1,4 +1,5 @@
 .env
+.wrangler/
 venv/
 __pycache__/
 *.pyc
@@ -10,4 +11,8 @@ data/brain/
 data/chroma_db/
 data/automation/
 data/deep_research/
+data/deep_dives/
+data/audio_notes/
+data/releases/
+dist/
 logs/

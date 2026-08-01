@@ -4,6 +4,7 @@ Fetches recent articles and saves to data/topics/YYYY-MM-DD.json
 """
 import json
 import os
+import shutil
 import xml.etree.ElementTree as ET
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
@@ -151,17 +152,20 @@ def fetch_blog_topics() -> list:
 def fetch_stashit_reads(days: int = 7) -> list:
     """Pull recently archived StashIt items + notes via Convex CLI."""
     import subprocess
-    NPXPATH = "/Users/bruce/.nvm/versions/node/v24.14.1/bin/npx"
+    npx_path = shutil.which("npx")
+    if not npx_path:
+        print("  StashIt fetch failed: npx is not available on PATH")
+        return []
+
+    stashit_convex_dir = Path.home() / "dev" / "me" / "stashit" / "packages" / "convex"
     since = int((datetime.now(timezone.utc).timestamp() - days * 86400) * 1000)
     args_json = json.dumps({"since": since})
     try:
-        node_bin = "/Users/bruce/.nvm/versions/node/v24.14.1/bin"
-        env = {**os.environ, "PATH": node_bin + ":" + os.environ.get("PATH", "")}
         result = subprocess.run(
-            [NPXPATH, "convex", "run", "podcastFeed:getRecentReads", "--prod", args_json],
+            [npx_path, "convex", "run", "podcastFeed:getRecentReads", "--prod", args_json],
             capture_output=True, text=True, timeout=30,
-            cwd="/Users/bruce/stashit/packages/convex",
-            env=env,
+            cwd=stashit_convex_dir,
+            env=os.environ.copy(),
         )
         items = json.loads(result.stdout)
         results = []

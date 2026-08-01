@@ -18,6 +18,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import sys
 import time
 from datetime import datetime, timezone
@@ -33,8 +34,8 @@ from config import OPENAI_API_KEY, TOPICS_DIR
 DEEP_RESEARCH_DIR = Path(__file__).parent / "data" / "deep_research"
 DEEP_RESEARCH_DIR.mkdir(parents=True, exist_ok=True)
 
-NODE_BIN = "/Users/bruce/.nvm/versions/node/v24.14.1/bin"
-CONVEX_DIR = "/Users/bruce/stashit/packages/convex"
+NPX_PATH = shutil.which("npx") or "npx"
+CONVEX_DIR = Path.home() / "dev" / "me" / "stashit" / "packages" / "convex"
 
 HEADERS = {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"}
 
@@ -229,11 +230,11 @@ def get_unresearched_stashit_items(days: int = 14) -> list[dict]:
     """Fetch StashIt items that haven't been deeply researched yet."""
     import subprocess
     since = int((datetime.now(timezone.utc).timestamp() - days * 86400) * 1000)
-    env = {**os.environ, "PATH": NODE_BIN + ":" + os.environ.get("PATH", "")}
+    env = os.environ.copy()
     args_json = json.dumps({"since": since})
     try:
         result = subprocess.run(
-            [NODE_BIN + "/npx", "convex", "run", "podcastFeed:getRecentReads", "--prod", args_json],
+            [NPX_PATH, "convex", "run", "podcastFeed:getRecentReads", "--prod", args_json],
             capture_output=True, text=True, timeout=30, cwd=CONVEX_DIR, env=env,
         )
         items = json.loads(result.stdout)

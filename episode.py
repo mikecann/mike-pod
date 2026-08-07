@@ -9,6 +9,7 @@ script with David. Publishing remains a separate, feed-last operation.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import html
 import json
 import re
@@ -16,6 +17,8 @@ import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+from PIL import Image, UnidentifiedImageError
 
 from audio_note import (
     DEFAULT_VOICE,
@@ -36,6 +39,8 @@ from audio_note import (
 BASE_DIR = Path(__file__).resolve().parent
 RELEASES_DIR = BASE_DIR / "data" / "releases"
 SHOW_ARTWORK = BASE_DIR / "assets" / "artwork" / "final" / "mike-pod-show-artwork-3000.jpg"
+IDENTITY_FILENAME = "episode_identity.json"
+DOSSIER_IDENTITY_FILES = ("dossier.json", "review.json", "source_manifest.json")
 
 WRITER_MODEL = "anthropic/claude-sonnet-5"
 AUDIT_MODEL = "openai/gpt-5.6-terra"
@@ -423,11 +428,7 @@ def make_show_notes(
     return markdown, html_notes
 
 
-def validate_episode_identity(
-    release_dir: Path,
-    episode_number: int,
-    episode_slug: str,
-) -> None:
+def episode_names(episode_number: int, episode_slug: str) -> dict[str, str]:
     if episode_number < 1:
         raise AudioNoteError("Episode number must be positive")
     if not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", episode_slug):
@@ -435,26 +436,6 @@ def validate_episode_identity(
             "Episode slug must contain lowercase ASCII letters, digits and hyphens"
         )
 
-    guid = f"mike-pod-episode-{episode_number:03d}"
-    public_audio = f"{guid}.mp3"
-    public_artwork = f"{guid}.jpg"
-    for metadata_path in RELEASES_DIR.glob("*/episode.json"):
-        if metadata_path.parent.resolve() == release_dir:
-            continue
-        metadata = read_json(metadata_path)
-        conflicts = (
-            metadata.get("episode") == episode_number,
-            metadata.get("guid") == guid,
-            metadata.get("public_audio_filename") == public_audio,
-            metadata.get("public_artwork_filename") == public_artwork,
-        )
-        if any(conflicts):
-            raise AudioNoteError(
-                f"Episode identity conflicts with existing release {metadata_path.parent}"
-            )
-
-
-def episode_names(episode_number: int, episode_slug: str) -> dict[str, str]:
     prefix = f"episode-{episode_number:03d}"
     guid = f"mike-pod-episode-{episode_number:03d}"
     return {
@@ -466,15 +447,132 @@ def episode_names(episode_number: int, episode_slug: str) -> dict[str, str]:
     }
 
 
+def dossier_identity(dossier_dir: Path) -> dict[str, str]:
+    digest = hashlib.sha256()
+    for filename in DOSSIER_IDENTITY_FILES:
+        path = dossier_dir / filename
+        try:
+            content = path.read_bytes()
+        except OSError as exc:
+            raise AudioNoteError(
+                f"Could not fingerprint dossier file {path}: {exc}"
+            ) from exc
+        digest.update(filename.encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(len(content).to_bytes(8, "big"))
+        digest.update(content)
+
+    try:
+        dossier_path = str(dossier_dir.relative_to(BASE_DIR))
+    except ValueError:
+        dossier_path = str(dossier_dir)
+    return {"path": dossier_path, "sha256": digest.hexdigest()}
+
+
+def make_episode_identity(
+    episode_number: int,
+    episode_slug: str,
+    dossier_dir: Path,
+) -> dict[str, Any]:
+    names = episode_names(episode_number, episode_slug)
+    return {
+        "schema_version": 1,
+        "episode": episode_number,
+        "slug": episode_slug,
+        "guid": names["guid"],
+        "public_audio_filename": names["public_audio"],
+        "public_artwork_filename": names["public_artwork"],
+        "dossier": dossier_identity(dossier_dir),
+    }
+
+
+def identity_conflicts(metadata: dict[str, Any], identity: dict[str, Any]) -> bool:
+    return any(
+        (
+            metadata.get("episode") == identity["episode"],
+            metadata.get("guid") == identity["guid"],
+            metadata.get("public_audio_filename")
+            == identity["public_audio_filename"],
+            metadata.get("public_artwork_filename")
+            == identity["public_artwork_filename"],
+        )
+    )
+
+
+def validate_episode_identity(
+    release_dir: Path,
+    identity: dict[str, Any],
+    *,
+    resume: bool,
+) -> None:
+    marker_path = release_dir / IDENTITY_FILENAME
+    if marker_path.exists():
+        existing = read_json(marker_path)
+        if existing != identity:
+            raise AudioNoteError(
+                "Output directory belongs to a different episode or dossier: "
+                f"{release_dir}"
+            )
+        if not resume:
+            raise AudioNoteError(
+                f"Release already exists at {release_dir}; use --resume to continue it"
+            )
+    elif release_dir.exists() and any(release_dir.iterdir()):
+        raise AudioNoteError(
+            f"Cannot safely use existing release without {IDENTITY_FILENAME}: "
+            f"{release_dir}"
+        )
+    elif resume:
+        raise AudioNoteError(f"Cannot resume release without {IDENTITY_FILENAME}")
+
+    metadata_paths = [
+        *RELEASES_DIR.glob(f"*/{IDENTITY_FILENAME}"),
+        *RELEASES_DIR.glob("*/episode.json"),
+    ]
+    for metadata_path in metadata_paths:
+        if metadata_path.parent.resolve() == release_dir:
+            continue
+        metadata = read_json(metadata_path)
+        if identity_conflicts(metadata, identity):
+            raise AudioNoteError(
+                f"Episode identity conflicts with existing release {metadata_path.parent}"
+            )
+
+
+def correction_versions(release_dir: Path) -> list[int]:
+    versions: list[int] = []
+    for path in release_dir.glob("correction_usage_v*.json"):
+        match = re.fullmatch(r"correction_usage_v(\d+)\.json", path.name)
+        if match:
+            versions.append(int(match.group(1)))
+    return sorted(versions)
+
+
+def validate_episode_artwork(path: Path) -> None:
+    try:
+        with Image.open(path) as image:
+            image_format = image.format
+            image_size = image.size
+            image.verify()
+    except (OSError, UnidentifiedImageError) as exc:
+        raise AudioNoteError(f"Episode artwork is not a valid image: {path}") from exc
+    if image_format != "JPEG":
+        raise AudioNoteError(
+            f"Episode artwork must be JPEG, not {image_format or 'unknown'}: {path}"
+        )
+    if image_size != (3000, 3000):
+        raise AudioNoteError(
+            f"Episode artwork must be 3000 by 3000, not {image_size}: {path}"
+        )
+
+
 def generate(args: argparse.Namespace) -> int:
     dossier_dir = args.dossier_dir.resolve()
     release_dir = (
         args.output_dir
         or RELEASES_DIR / f"episode-{args.episode_number:03d}-{args.episode_slug}"
     ).resolve()
-    validate_episode_identity(release_dir, args.episode_number, args.episode_slug)
     names = episode_names(args.episode_number, args.episode_slug)
-    release_dir.mkdir(parents=True, exist_ok=True)
 
     dossier = read_json(dossier_dir / "dossier.json")
     review = read_json(dossier_dir / "review.json")
@@ -483,6 +581,15 @@ def generate(args: argparse.Namespace) -> int:
         raise AudioNoteError("The research dossier is not approved for scripting")
     if not isinstance(manifest, list):
         raise AudioNoteError("The source manifest is not a list")
+
+    identity = make_episode_identity(
+        args.episode_number,
+        args.episode_slug,
+        dossier_dir,
+    )
+    validate_episode_identity(release_dir, identity, resume=args.resume)
+    release_dir.mkdir(parents=True, exist_ok=True)
+    write_json(release_dir / IDENTITY_FILENAME, identity)
 
     sources = compact_sources(manifest)
     source_by_id = {source["source_id"]: source for source in sources}
@@ -529,7 +636,25 @@ def generate(args: argparse.Namespace) -> int:
 
     package_errors = validate_package(package, valid_ids)
     audit_errors = validate_audit(audit)
-    for correction_number in range(1, 4):
+    existing_corrections = correction_versions(release_dir)
+    first_correction_number = max(existing_corrections, default=0) + 1
+    if args.resume and existing_corrections:
+        previous_correction = first_correction_number - 1
+        previous_package = release_dir / f"corrected_draft_v{previous_correction}.json"
+        if (
+            not approved_package.exists()
+            and not previous_package.exists()
+            and correction_candidate.exists()
+        ):
+            write_json(previous_package, package)
+        previous_audit = release_dir / f"audit_v{previous_correction + 1}.json"
+        if not previous_audit.exists():
+            write_json(previous_audit, audit)
+
+    for correction_number in range(
+        first_correction_number,
+        first_correction_number + 3,
+    ):
         if not package_errors and not audit_errors:
             break
         package, correction_usage = call_openrouter(
@@ -544,6 +669,10 @@ def generate(args: argparse.Namespace) -> int:
             schema_name="mike_pod_corrected_episode",
         )
         write_json(release_dir / "corrected_draft.json", package)
+        write_json(
+            release_dir / f"corrected_draft_v{correction_number}.json",
+            package,
+        )
         write_json(
             release_dir / f"correction_usage_v{correction_number}.json",
             correction_usage,
@@ -562,6 +691,7 @@ def generate(args: argparse.Namespace) -> int:
             schema_name="mike_pod_episode_audit",
         )
         write_json(release_dir / "audit.json", audit)
+        write_json(release_dir / f"audit_v{correction_number + 1}.json", audit)
         write_json(
             release_dir / f"audit_usage_v{correction_number + 1}.json",
             audit_usage,
@@ -591,6 +721,7 @@ def generate(args: argparse.Namespace) -> int:
     episode_artwork = args.episode_artwork.resolve()
     if not episode_artwork.exists():
         raise AudioNoteError(f"Episode artwork does not exist: {episode_artwork}")
+    validate_episode_artwork(episode_artwork)
     shutil.copy2(episode_artwork, release_dir / "episode-artwork.jpg")
 
     elevenlabs_key = load_elevenlabs_key()
@@ -655,7 +786,8 @@ def generate(args: argparse.Namespace) -> int:
         "show_notes_html_filename": "show_notes.html",
         "show_notes_markdown_filename": "show_notes.md",
         "featured_source_ids": package["featured_source_ids"],
-        "dossier_path": str(dossier_dir.relative_to(BASE_DIR)),
+        "dossier_path": identity["dossier"]["path"],
+        "dossier_sha256": identity["dossier"]["sha256"],
         "writer_model": args.writer_model,
         "audit_model": args.audit_model,
         "voice": DEFAULT_VOICE,

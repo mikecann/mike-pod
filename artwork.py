@@ -39,12 +39,17 @@ def fitted_font(
     min_size: int,
     max_width: int,
 ) -> ImageFont.FreeTypeFont:
-    for size in range(max_size, min_size - 1, -4):
+    sizes = list(range(max_size, min_size - 1, -4))
+    if not sizes or sizes[-1] != min_size:
+        sizes.append(min_size)
+    for size in sizes:
         candidate = font(path, size)
         left, _, right, _ = draw.textbbox((0, 0), text, font=candidate)
         if right - left <= max_width:
             return candidate
-    return font(path, min_size)
+    raise RuntimeError(
+        f"Artwork text does not fit at the minimum font size: {text!r}"
+    )
 
 
 def darken_bottom(image: Image.Image, *, start_y: int, opacity: int) -> Image.Image:
@@ -234,6 +239,15 @@ def main() -> int:
     args = parser.parse_args()
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
+    custom_values = (
+        args.episode_number,
+        args.episode_title_line,
+        args.episode_question,
+        args.episode_slug,
+    )
+    if args.episode_base is None and any(value is not None for value in custom_values):
+        parser.error("--episode-base is required when using custom episode options")
+
     if args.episode_base is not None:
         required = {
             "--episode-number": args.episode_number,
@@ -244,18 +258,21 @@ def main() -> int:
         missing = [name for name, value in required.items() if not value]
         if missing:
             parser.error(f"custom episode artwork requires {', '.join(missing)}")
-        paths = list(
-            finish_episode_art(
-                args.episode_base,
-                args.output_dir,
-                episode_number=args.episode_number,
-                title_lines=tuple(args.episode_title_line),
-                question=args.episode_question,
-                output_stem=(
-                    f"episode-{args.episode_number:03d}-{args.episode_slug}-3000"
-                ),
+        try:
+            paths = list(
+                finish_episode_art(
+                    args.episode_base,
+                    args.output_dir,
+                    episode_number=args.episode_number,
+                    title_lines=tuple(args.episode_title_line),
+                    question=args.episode_question,
+                    output_stem=(
+                        f"episode-{args.episode_number:03d}-{args.episode_slug}-3000"
+                    ),
+                )
             )
-        )
+        except (OSError, RuntimeError) as exc:
+            parser.error(str(exc))
     else:
         paths = [
             *finish_show_art(SOURCE_DIR / "show-base.png", args.output_dir),

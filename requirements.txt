@@ -3,3 +3,4 @@ requests
 feedgen
 python-dateutil
 beautifulsoup4
+Pillow

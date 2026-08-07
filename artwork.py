@@ -248,17 +248,17 @@ def main() -> int:
     if args.episode_base is None and any(value is not None for value in custom_values):
         parser.error("--episode-base is required when using custom episode options")
 
-    if args.episode_base is not None:
-        required = {
-            "--episode-number": args.episode_number,
-            "--episode-title-line": args.episode_title_line,
-            "--episode-question": args.episode_question,
-            "--episode-slug": args.episode_slug,
-        }
-        missing = [name for name, value in required.items() if not value]
-        if missing:
-            parser.error(f"custom episode artwork requires {', '.join(missing)}")
-        try:
+    try:
+        if args.episode_base is not None:
+            required = {
+                "--episode-number": args.episode_number,
+                "--episode-title-line": args.episode_title_line,
+                "--episode-question": args.episode_question,
+                "--episode-slug": args.episode_slug,
+            }
+            missing = [name for name, value in required.items() if not value]
+            if missing:
+                parser.error(f"custom episode artwork requires {', '.join(missing)}")
             paths = list(
                 finish_episode_art(
                     args.episode_base,
@@ -271,16 +271,16 @@ def main() -> int:
                     ),
                 )
             )
-        except (OSError, RuntimeError) as exc:
-            parser.error(str(exc))
-    else:
-        paths = [
-            *finish_show_art(SOURCE_DIR / "show-base.png", args.output_dir),
-            *finish_episode_art(
-                SOURCE_DIR / "episode-001-wolfram-base.png",
-                args.output_dir,
-            ),
-        ]
+        else:
+            paths = [
+                *finish_show_art(SOURCE_DIR / "show-base.png", args.output_dir),
+                *finish_episode_art(
+                    SOURCE_DIR / "episode-001-wolfram-base.png",
+                    args.output_dir,
+                ),
+            ]
+    except (OSError, RuntimeError) as exc:
+        parser.error(str(exc))
     for path in paths:
         print(path)
     return 0

@@ -6,7 +6,7 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 from unittest.mock import patch
 
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFont
 
 import artwork
 import episode
@@ -17,6 +17,7 @@ from episode import (
     IDENTITY_FILENAME,
     correction_versions,
     episode_names,
+    incomplete_correction_version,
     make_episode_identity,
     validate_audit,
     validate_episode_artwork,
@@ -147,6 +148,20 @@ class EpisodeGateTests(unittest.TestCase):
                 ):
                     validate_episode_identity(release, second_identity, resume=True)
 
+    def test_marker_only_release_can_restart_the_first_draft(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            releases = root / "releases"
+            releases.mkdir()
+            dossier = self.write_dossier(root, "dossier")
+            release = releases / "episode-002"
+            release.mkdir()
+            identity = make_episode_identity(2, "quantum", dossier)
+            (release / IDENTITY_FILENAME).write_text(json.dumps(identity))
+
+            with patch.object(episode, "RELEASES_DIR", releases):
+                validate_episode_identity(release, identity, resume=False)
+
     def test_episode_artwork_must_be_3000_square_jpeg(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -171,6 +186,14 @@ class EpisodeGateTests(unittest.TestCase):
             (release / "correction_usage_latest.json").write_text("{}")
 
             self.assertEqual(correction_versions(release), [1, 3])
+
+    def test_interrupted_correction_keeps_the_missing_audit_visible(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            release = Path(temporary)
+            (release / "correction_usage_v2.json").write_text("{}")
+
+            self.assertEqual(incomplete_correction_version(release), 2)
+            self.assertFalse((release / "audit_v3.json").exists())
 
     def test_rejected_review_reports_every_severity(self):
         details = rejected_review_details(
@@ -229,11 +252,14 @@ class ArtworkTests(unittest.TestCase):
         image = Image.new("RGB", (100, 100))
         draw = ImageDraw.Draw(image)
 
-        with self.assertRaisesRegex(RuntimeError, "does not fit"):
+        with (
+            patch.object(artwork, "font", return_value=ImageFont.load_default()),
+            self.assertRaisesRegex(RuntimeError, "does not fit"),
+        ):
             artwork.fitted_font(
                 draw,
                 "THIS CANNOT FIT",
-                artwork.BODY_FONT,
+                Path("portable-test-font"),
                 max_size=42,
                 min_size=42,
                 max_width=1,

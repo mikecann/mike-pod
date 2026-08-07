@@ -505,6 +505,7 @@ def validate_episode_identity(
     *,
     resume: bool,
 ) -> None:
+    release_dir = release_dir.resolve()
     marker_path = release_dir / IDENTITY_FILENAME
     if marker_path.exists():
         existing = read_json(marker_path)
@@ -513,7 +514,8 @@ def validate_episode_identity(
                 "Output directory belongs to a different episode or dossier: "
                 f"{release_dir}"
             )
-        if not resume:
+        other_files = [path for path in release_dir.iterdir() if path != marker_path]
+        if not resume and other_files:
             raise AudioNoteError(
                 f"Release already exists at {release_dir}; use --resume to continue it"
             )
@@ -546,6 +548,16 @@ def correction_versions(release_dir: Path) -> list[int]:
         if match:
             versions.append(int(match.group(1)))
     return sorted(versions)
+
+
+def incomplete_correction_version(release_dir: Path) -> int | None:
+    versions = correction_versions(release_dir)
+    if not versions:
+        return None
+    latest = versions[-1]
+    if not (release_dir / f"audit_v{latest + 1}.json").exists():
+        return latest
+    return None
 
 
 def validate_episode_artwork(path: Path) -> None:
@@ -634,8 +646,6 @@ def generate(args: argparse.Namespace) -> int:
         write_json(release_dir / "audit_v1.json", audit)
         write_json(release_dir / "audit_usage_v1.json", audit_usage)
 
-    package_errors = validate_package(package, valid_ids)
-    audit_errors = validate_audit(audit)
     existing_corrections = correction_versions(release_dir)
     first_correction_number = max(existing_corrections, default=0) + 1
     if args.resume and existing_corrections:
@@ -647,9 +657,32 @@ def generate(args: argparse.Namespace) -> int:
             and correction_candidate.exists()
         ):
             write_json(previous_package, package)
-        previous_audit = release_dir / f"audit_v{previous_correction + 1}.json"
-        if not previous_audit.exists():
-            write_json(previous_audit, audit)
+        interrupted_correction = incomplete_correction_version(release_dir)
+        if interrupted_correction is not None and not approved_package.exists():
+            # The correction was written but its independent audit never completed.
+            # Re-run that audit instead of copying a stale result into the gap.
+            audit, audit_usage = call_openrouter(
+                openrouter_key,
+                model=args.audit_model,
+                system_prompt=(
+                    "You are an exacting independent science editor. Reject subtle "
+                    "overclaiming, invented personalisation, and unsupported certainty."
+                ),
+                user_prompt=audit_prompt(dossier, review, sources, package),
+                max_tokens=3_500,
+                response_schema=AUDIT_SCHEMA,
+                schema_name="mike_pod_episode_audit",
+            )
+            audit_version = interrupted_correction + 1
+            write_json(release_dir / "audit.json", audit)
+            write_json(release_dir / f"audit_v{audit_version}.json", audit)
+            write_json(
+                release_dir / f"audit_usage_v{audit_version}.json",
+                audit_usage,
+            )
+
+    package_errors = validate_package(package, valid_ids)
+    audit_errors = validate_audit(audit)
 
     for correction_number in range(
         first_correction_number,

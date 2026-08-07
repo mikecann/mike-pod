@@ -19,8 +19,19 @@ live publishing path.
   validation.
 - A second model must approve the dossier before scripting. A separate audit
   must approve the script before narration.
-- Write for one technically experienced, curious listener. Do not invent Mike's
-  opinions or tell him what he believes.
+- Write for one curious software builder who has no formal physics background.
+  Technical experience is not permission to assume physics vocabulary. Do not
+  invent Mike's opinions or tell him what he believes.
+- Prefer three or four well-explained ideas over a tour of every research
+  branch. Introduce one new abstraction at a time, define unavoidable jargon in
+  the same sentence, and keep equations and unexplained initialisms out of the
+  spoken script.
+- Use concrete examples and familiar software, game or everyday analogies where
+  they genuinely clarify an idea. Say briefly where an analogy stops matching
+  the science so it does not become a misleading explanation.
+- The script audit must reject an episode that is accurate but unnecessarily
+  dense, assumes physics training, or stacks technical terms without returning
+  to a concrete example.
 - Narrate with David in ElevenLabs, then normalise mono audio to -19 LUFS with a
   -1 dB true-peak ceiling.
 

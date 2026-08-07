@@ -1341,6 +1341,14 @@ def repair_deep_dive(
     )
     provenance["audio_generated"] = False
     write_json(output_dir / "provenance.json", provenance)
+    if repaired_review.get("approved_for_script") is not True:
+        blocking = [
+            issue.get("detail", "unspecified blocking issue")
+            for issue in repaired_review.get("issues", [])
+            if isinstance(issue, dict) and issue.get("severity") == "blocking"
+        ]
+        details = " | ".join(blocking) or "final independent review did not approve"
+        raise AudioNoteError(f"Repaired dossier was not approved for scripting: {details}")
     return output_dir
 
 

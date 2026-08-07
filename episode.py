@@ -560,6 +560,21 @@ def incomplete_correction_version(release_dir: Path) -> int | None:
     return None
 
 
+def resume_audit_path(release_dir: Path) -> Path:
+    canonical = release_dir / "audit.json"
+    if canonical.exists():
+        return canonical
+
+    versioned: list[tuple[int, Path]] = []
+    for path in release_dir.glob("audit_v*.json"):
+        match = re.fullmatch(r"audit_v(\d+)\.json", path.name)
+        if match:
+            versioned.append((int(match.group(1)), path))
+    if versioned:
+        return max(versioned)[1]
+    return canonical
+
+
 def validate_episode_artwork(path: Path) -> None:
     try:
         with Image.open(path) as image:
@@ -614,7 +629,7 @@ def generate(args: argparse.Namespace) -> int:
         package = read_json(
             approved_package if approved_package.exists() else correction_candidate
         )
-        audit = read_json(release_dir / "audit.json")
+        audit = read_json(resume_audit_path(release_dir))
     else:
         package, writer_usage = call_openrouter(
             openrouter_key,

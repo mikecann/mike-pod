@@ -19,6 +19,7 @@ from episode import (
     episode_names,
     incomplete_correction_version,
     make_episode_identity,
+    resume_audit_path,
     validate_audit,
     validate_episode_artwork,
     validate_episode_identity,
@@ -194,6 +195,14 @@ class EpisodeGateTests(unittest.TestCase):
 
             self.assertEqual(incomplete_correction_version(release), 2)
             self.assertFalse((release / "audit_v3.json").exists())
+
+    def test_first_interrupted_correction_resumes_from_versioned_audit(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            release = Path(temporary)
+            first_audit = release / "audit_v1.json"
+            first_audit.write_text("{}")
+
+            self.assertEqual(resume_audit_path(release), first_audit)
 
     def test_rejected_review_reports_every_severity(self):
         details = rejected_review_details(

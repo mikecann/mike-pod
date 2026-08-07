@@ -1,14 +1,59 @@
+import json
+import sys
 import tempfile
 import unittest
 import xml.etree.ElementTree as ET
 from pathlib import Path
+from unittest.mock import patch
 
+from PIL import Image, ImageDraw, ImageFont
+
+import artwork
+import episode
 import feed
-from episode import validate_audit, validate_package
+from audio_note import AudioNoteError
+from deep_dive import rejected_review_details
+from episode import (
+    IDENTITY_FILENAME,
+    correction_versions,
+    episode_names,
+    incomplete_correction_version,
+    make_episode_identity,
+    resume_audit_path,
+    validate_audit,
+    validate_episode_artwork,
+    validate_episode_identity,
+    validate_package,
+    writer_prompt,
+)
 from publish import cache_control, content_type
 
 
 class EpisodeGateTests(unittest.TestCase):
+    def write_dossier(self, root: Path, label: str) -> Path:
+        dossier_dir = root / label
+        dossier_dir.mkdir()
+        (dossier_dir / "dossier.json").write_text(json.dumps({"label": label}))
+        (dossier_dir / "review.json").write_text(
+            json.dumps({"approved_for_script": True})
+        )
+        (dossier_dir / "source_manifest.json").write_text("[]")
+        return dossier_dir
+
+    def test_writer_prompt_assumes_no_physics_training(self):
+        prompt = writer_prompt({}, {}, [])
+
+        self.assertIn("not a physicist", prompt)
+        self.assertIn("where each analogy breaks", prompt)
+        self.assertIn("three or four most useful ideas", prompt)
+
+    def test_later_episode_names_do_not_reuse_episode_one(self):
+        names = episode_names(2, "quantum-reality")
+
+        self.assertEqual(names["guid"], "mike-pod-episode-002")
+        self.assertEqual(names["audio"], "episode-002-quantum-reality.mp3")
+        self.assertEqual(names["public_audio"], "mike-pod-episode-002.mp3")
+
     def test_rejects_internal_source_ids_in_spoken_script(self):
         package = {
             "script": " ".join(["A supported point from S09."] * 400),
@@ -26,12 +71,208 @@ class EpisodeGateTests(unittest.TestCase):
             "factual_issues": ["One problem"],
             "calibration_issues": [],
             "personalisation_issues": [],
+            "accessibility_issues": [],
             "required_edits": [],
         }
 
         errors = validate_audit(audit)
 
         self.assertTrue(any("factual_issues" in error for error in errors))
+
+    def test_audit_rejects_accessibility_issues(self):
+        audit = {
+            "approved": True,
+            "factual_issues": [],
+            "calibration_issues": [],
+            "personalisation_issues": [],
+            "accessibility_issues": ["Uses unexplained quantum jargon"],
+            "required_edits": [],
+        }
+
+        errors = validate_audit(audit)
+
+        self.assertTrue(any("accessibility_issues" in error for error in errors))
+
+    def test_draft_identity_blocks_duplicate_episode_number(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            releases = root / "releases"
+            releases.mkdir()
+            dossier = self.write_dossier(root, "dossier")
+            first_release = releases / "episode-002-first"
+            first_release.mkdir()
+            first_identity = make_episode_identity(2, "first", dossier)
+            (first_release / IDENTITY_FILENAME).write_text(json.dumps(first_identity))
+            second_identity = make_episode_identity(2, "second", dossier)
+
+            with patch.object(episode, "RELEASES_DIR", releases):
+                with self.assertRaisesRegex(AudioNoteError, "conflicts"):
+                    validate_episode_identity(
+                        releases / "episode-002-second",
+                        second_identity,
+                        resume=False,
+                    )
+
+    def test_output_directory_rejects_a_different_episode(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            releases = root / "releases"
+            releases.mkdir()
+            dossier = self.write_dossier(root, "dossier")
+            release = releases / "shared-output"
+            release.mkdir()
+            first_identity = make_episode_identity(1, "first", dossier)
+            (release / IDENTITY_FILENAME).write_text(json.dumps(first_identity))
+            second_identity = make_episode_identity(2, "second", dossier)
+
+            with patch.object(episode, "RELEASES_DIR", releases):
+                with self.assertRaisesRegex(AudioNoteError, "different episode"):
+                    validate_episode_identity(release, second_identity, resume=True)
+
+    def test_resume_rejects_a_different_dossier_fingerprint(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            releases = root / "releases"
+            releases.mkdir()
+            first_dossier = self.write_dossier(root, "first-dossier")
+            second_dossier = self.write_dossier(root, "second-dossier")
+            release = releases / "episode-002"
+            release.mkdir()
+            first_identity = make_episode_identity(2, "quantum", first_dossier)
+            (release / IDENTITY_FILENAME).write_text(json.dumps(first_identity))
+            second_identity = make_episode_identity(2, "quantum", second_dossier)
+
+            with patch.object(episode, "RELEASES_DIR", releases):
+                with self.assertRaisesRegex(
+                    AudioNoteError,
+                    "different episode or dossier",
+                ):
+                    validate_episode_identity(release, second_identity, resume=True)
+
+    def test_marker_only_release_can_restart_the_first_draft(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            releases = root / "releases"
+            releases.mkdir()
+            dossier = self.write_dossier(root, "dossier")
+            release = releases / "episode-002"
+            release.mkdir()
+            identity = make_episode_identity(2, "quantum", dossier)
+            (release / IDENTITY_FILENAME).write_text(json.dumps(identity))
+
+            with patch.object(episode, "RELEASES_DIR", releases):
+                validate_episode_identity(release, identity, resume=False)
+
+    def test_episode_artwork_must_be_3000_square_jpeg(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            valid = root / "valid.jpg"
+            wrong_format = root / "wrong.png"
+            wrong_size = root / "small.jpg"
+            Image.new("RGB", (3000, 3000)).save(valid, format="JPEG")
+            Image.new("RGB", (3000, 3000)).save(wrong_format, format="PNG")
+            Image.new("RGB", (100, 100)).save(wrong_size, format="JPEG")
+
+            validate_episode_artwork(valid)
+            with self.assertRaisesRegex(AudioNoteError, "must be JPEG"):
+                validate_episode_artwork(wrong_format)
+            with self.assertRaisesRegex(AudioNoteError, "must be 3000 by 3000"):
+                validate_episode_artwork(wrong_size)
+
+    def test_resumed_correction_versions_continue_without_overwrite(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            release = Path(temporary)
+            (release / "correction_usage_v1.json").write_text("{}")
+            (release / "correction_usage_v3.json").write_text("{}")
+            (release / "correction_usage_latest.json").write_text("{}")
+
+            self.assertEqual(correction_versions(release), [1, 3])
+
+    def test_interrupted_correction_keeps_the_missing_audit_visible(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            release = Path(temporary)
+            (release / "correction_usage_v2.json").write_text("{}")
+
+            self.assertEqual(incomplete_correction_version(release), 2)
+            self.assertFalse((release / "audit_v3.json").exists())
+
+    def test_first_interrupted_correction_resumes_from_versioned_audit(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            release = Path(temporary)
+            first_audit = release / "audit_v1.json"
+            first_audit.write_text("{}")
+
+            self.assertEqual(resume_audit_path(release), first_audit)
+
+    def test_rejected_review_reports_every_severity(self):
+        details = rejected_review_details(
+            {
+                "issues": [
+                    {"severity": "important", "detail": "Missing comparison"},
+                    {"severity": "minor", "detail": "Clarify wording"},
+                ]
+            }
+        )
+
+        self.assertIn("important: Missing comparison", details)
+        self.assertIn("minor: Clarify wording", details)
+
+
+class ArtworkTests(unittest.TestCase):
+    def test_custom_options_require_an_episode_base(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            with patch.object(
+                sys,
+                "argv",
+                ["artwork.py", "--output-dir", temporary, "--episode-number", "2"],
+            ):
+                with self.assertRaises(SystemExit):
+                    artwork.main()
+
+    def test_custom_render_errors_are_reported_as_cli_errors(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            argv = [
+                "artwork.py",
+                "--output-dir",
+                temporary,
+                "--episode-base",
+                "base.png",
+                "--episode-number",
+                "2",
+                "--episode-title-line",
+                "TITLE",
+                "--episode-question",
+                "QUESTION",
+                "--episode-slug",
+                "episode",
+            ]
+            with (
+                patch.object(sys, "argv", argv),
+                patch.object(
+                    artwork,
+                    "finish_episode_art",
+                    side_effect=RuntimeError("does not fit"),
+                ),
+            ):
+                with self.assertRaises(SystemExit):
+                    artwork.main()
+
+    def test_fitted_font_rejects_text_that_cannot_fit(self):
+        image = Image.new("RGB", (100, 100))
+        draw = ImageDraw.Draw(image)
+
+        with (
+            patch.object(artwork, "font", return_value=ImageFont.load_default()),
+            self.assertRaisesRegex(RuntimeError, "does not fit"),
+        ):
+            artwork.fitted_font(
+                draw,
+                "THIS CANNOT FIT",
+                Path("portable-test-font"),
+                max_size=42,
+                min_size=42,
+                max_width=1,
+            )
 
 
 class FeedTests(unittest.TestCase):

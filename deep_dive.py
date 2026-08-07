@@ -1134,6 +1134,16 @@ def run_deep_dive(
     return output_dir
 
 
+def rejected_review_details(review: dict[str, Any]) -> str:
+    issues = [
+        f"{issue.get('severity', 'issue')}: "
+        f"{issue.get('detail', 'unspecified review issue')}"
+        for issue in review.get("issues", [])
+        if isinstance(issue, dict)
+    ]
+    return " | ".join(issues) or "final independent review did not approve"
+
+
 def repair_deep_dive(
     output_dir: Path,
     *,
@@ -1341,6 +1351,9 @@ def repair_deep_dive(
     )
     provenance["audio_generated"] = False
     write_json(output_dir / "provenance.json", provenance)
+    if repaired_review.get("approved_for_script") is not True:
+        details = rejected_review_details(repaired_review)
+        raise AudioNoteError(f"Repaired dossier was not approved for scripting: {details}")
     return output_dir
 
 

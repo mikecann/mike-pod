@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import re
 from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont
@@ -38,12 +39,17 @@ def fitted_font(
     min_size: int,
     max_width: int,
 ) -> ImageFont.FreeTypeFont:
-    for size in range(max_size, min_size - 1, -4):
+    sizes = list(range(max_size, min_size - 1, -4))
+    if not sizes or sizes[-1] != min_size:
+        sizes.append(min_size)
+    for size in sizes:
         candidate = font(path, size)
         left, _, right, _ = draw.textbbox((0, 0), text, font=candidate)
         if right - left <= max_width:
             return candidate
-    return font(path, min_size)
+    raise RuntimeError(
+        f"Artwork text does not fit at the minimum font size: {text!r}"
+    )
 
 
 def darken_bottom(image: Image.Image, *, start_y: int, opacity: int) -> Image.Image:
@@ -136,7 +142,22 @@ def finish_show_art(base_path: Path, output_dir: Path) -> tuple[Path, Path]:
     return png_path, jpg_path
 
 
-def finish_episode_art(base_path: Path, output_dir: Path) -> tuple[Path, Path]:
+def finish_episode_art(
+    base_path: Path,
+    output_dir: Path,
+    *,
+    episode_number: int = 1,
+    title_lines: tuple[str, ...] = ("WOLFRAM'S", "COMPUTATIONAL", "UNIVERSE"),
+    question: str = "WHAT WOULD COUNT AS EVIDENCE?",
+    output_stem: str = "episode-001-wolfram-universe-3000",
+) -> tuple[Path, Path]:
+    if episode_number < 1:
+        raise RuntimeError("Episode number must be positive")
+    if not 1 <= len(title_lines) <= 3 or any(not line.strip() for line in title_lines):
+        raise RuntimeError("Episode artwork needs one to three non-empty title lines")
+    if not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", output_stem):
+        raise RuntimeError("Artwork output stem must be lowercase ASCII with hyphens")
+
     image = Image.open(base_path).convert("RGB").resize(
         (CANVAS_SIZE, CANVAS_SIZE),
         Image.Resampling.LANCZOS,
@@ -148,16 +169,23 @@ def finish_episode_art(base_path: Path, output_dir: Path) -> tuple[Path, Path]:
     add_tracking(
         draw,
         (235, 178),
-        "MIKE POD  /  EPISODE 001",
+        f"MIKE POD  /  EPISODE {episode_number:03d}",
         typeface=label_font,
         fill=CYAN,
         tracking=5,
     )
     draw.rounded_rectangle((235, 295, 1050, 303), radius=4, fill=AMBER)
 
-    title_font = font(DISPLAY_FONT, 360)
     line_height = 345
-    for index, line in enumerate(("WOLFRAM'S", "COMPUTATIONAL", "UNIVERSE")):
+    for index, line in enumerate(title_lines):
+        title_font = fitted_font(
+            draw,
+            line,
+            DISPLAY_FONT,
+            max_size=360,
+            min_size=180,
+            max_width=2540,
+        )
         draw.text(
             (226, 340 + index * line_height),
             line,
@@ -167,8 +195,14 @@ def finish_episode_art(base_path: Path, output_dir: Path) -> tuple[Path, Path]:
             stroke_fill=(9, 23, 37),
         )
 
-    question_font = font(BODY_FONT, 64)
-    question = "WHAT WOULD COUNT AS EVIDENCE?"
+    question_font = fitted_font(
+        draw,
+        question,
+        BODY_FONT,
+        max_size=64,
+        min_size=42,
+        max_width=2380,
+    )
     question_box = draw.textbbox((0, 0), question, font=question_font)
     question_width = question_box[2] - question_box[0]
     question_x = CANVAS_SIZE - 235 - question_width
@@ -181,8 +215,8 @@ def finish_episode_art(base_path: Path, output_dir: Path) -> tuple[Path, Path]:
     )
     draw.text((question_x, 2767), question, font=question_font, fill=OFF_WHITE)
 
-    png_path = output_dir / "episode-001-wolfram-universe-3000.png"
-    jpg_path = output_dir / "episode-001-wolfram-universe-3000.jpg"
+    png_path = output_dir / f"{output_stem}.png"
+    jpg_path = output_dir / f"{output_stem}.jpg"
     image.convert("RGB").save(png_path, format="PNG", optimize=True)
     image.convert("RGB").save(
         jpg_path,
@@ -197,16 +231,56 @@ def finish_episode_art(base_path: Path, output_dir: Path) -> tuple[Path, Path]:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output-dir", type=Path, default=FINAL_DIR)
+    parser.add_argument("--episode-base", type=Path)
+    parser.add_argument("--episode-number", type=int)
+    parser.add_argument("--episode-title-line", action="append")
+    parser.add_argument("--episode-question")
+    parser.add_argument("--episode-slug")
     args = parser.parse_args()
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
-    paths = [
-        *finish_show_art(SOURCE_DIR / "show-base.png", args.output_dir),
-        *finish_episode_art(
-            SOURCE_DIR / "episode-001-wolfram-base.png",
-            args.output_dir,
-        ),
-    ]
+    custom_values = (
+        args.episode_number,
+        args.episode_title_line,
+        args.episode_question,
+        args.episode_slug,
+    )
+    if args.episode_base is None and any(value is not None for value in custom_values):
+        parser.error("--episode-base is required when using custom episode options")
+
+    try:
+        if args.episode_base is not None:
+            required = {
+                "--episode-number": args.episode_number,
+                "--episode-title-line": args.episode_title_line,
+                "--episode-question": args.episode_question,
+                "--episode-slug": args.episode_slug,
+            }
+            missing = [name for name, value in required.items() if not value]
+            if missing:
+                parser.error(f"custom episode artwork requires {', '.join(missing)}")
+            paths = list(
+                finish_episode_art(
+                    args.episode_base,
+                    args.output_dir,
+                    episode_number=args.episode_number,
+                    title_lines=tuple(args.episode_title_line),
+                    question=args.episode_question,
+                    output_stem=(
+                        f"episode-{args.episode_number:03d}-{args.episode_slug}-3000"
+                    ),
+                )
+            )
+        else:
+            paths = [
+                *finish_show_art(SOURCE_DIR / "show-base.png", args.output_dir),
+                *finish_episode_art(
+                    SOURCE_DIR / "episode-001-wolfram-base.png",
+                    args.output_dir,
+                ),
+            ]
+    except (OSError, RuntimeError) as exc:
+        parser.error(str(exc))
     for path in paths:
         print(path)
     return 0

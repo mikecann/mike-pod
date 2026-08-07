@@ -21,8 +21,11 @@ generation, RSS publishing or playback.
    sources.
 4. Claude synthesises a source-linked dossier.
 5. A different model independently reviews the dossier.
-6. Claude writes a single-narrator script only after dossier approval.
-7. A different model checks factual support, calibration and personalisation.
+6. Claude writes an accessible single-narrator script only after dossier
+   approval, assuming curiosity and software experience but no physics degree.
+7. A different model checks factual support, calibration, personalisation and
+   whether technical ideas are explained with concrete examples and bounded
+   analogies.
 8. ElevenLabs narrates the approved script with David.
 9. `ffmpeg` normalises the mono MP3 to -19 LUFS and a -1 dB true-peak ceiling.
 10. Artwork and audio are uploaded and byte-verified before the RSS feed is
@@ -58,10 +61,27 @@ web discovery. Research packages and source snapshots remain private under
 
 ## Episode production
 
-Turn the approved Wolfram dossier into the first audited David narration:
+Turn an approved dossier into an audited text package without spending
+ElevenLabs credits:
 
 ```bash
-python3 episode.py
+python3 episode.py \
+  --dossier-dir data/deep_dives/<approved-run> \
+  --episode-number 2 \
+  --episode-slug <ascii-slug> \
+  --draft-only
+```
+
+After producing the episode artwork, resume the approved package for David
+narration:
+
+```bash
+python3 episode.py \
+  --dossier-dir data/deep_dives/<approved-run> \
+  --episode-number 2 \
+  --episode-slug <ascii-slug> \
+  --episode-artwork assets/artwork/final/<episode-artwork>.jpg \
+  --resume
 ```
 
 Build the RSS bundle:

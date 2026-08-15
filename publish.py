@@ -57,7 +57,7 @@ def cache_control(key: str) -> str:
 
 def wrangler(arguments: list[str], *, timeout: int = 300) -> subprocess.CompletedProcess:
     result = subprocess.run(
-        ["npx", "--yes", "wrangler@latest", *arguments],
+        ["wrangler", *arguments],
         cwd=BASE_DIR,
         capture_output=True,
         text=True,
@@ -138,8 +138,7 @@ def upload_and_verify(
     public_base_url: str,
 ) -> None:
     existing = temporary_dir / ("existing-" + source.name)
-    public_url = f"{public_base_url}/{key}"
-    if key.startswith("episodes/") and public_copy(public_url, existing):
+    if key.startswith("episodes/") and remote_copy(bucket, key, existing):
         if sha256(existing) != sha256(source):
             raise PublishError(
                 f"Refusing to replace immutable episode object {key} with "
@@ -150,10 +149,7 @@ def upload_and_verify(
 
     upload(bucket, key, source)
     verified = temporary_dir / ("verified-" + source.name)
-    if key.startswith("episodes/"):
-        exists = public_copy(public_url, verified)
-    else:
-        exists = remote_copy(bucket, key, verified)
+    exists = remote_copy(bucket, key, verified)
     if not exists:
         raise PublishError(f"R2 did not return newly uploaded object {key}")
     if sha256(verified) != sha256(source):
@@ -167,11 +163,18 @@ def public_head(url: str) -> tuple[int, dict[str, str]]:
         return response.status, {key.lower(): value for key, value in response.headers.items()}
 
 
-def verify_public(source_dir: Path, public_base_url: str, attempts: int = 12) -> None:
+def verify_public(
+    source_dir: Path,
+    public_base_url: str,
+    attempts: int = 12,
+    *,
+    include_feed: bool = True,
+) -> None:
     expected = {
         path.relative_to(source_dir).as_posix(): path.stat().st_size
         for path in source_dir.rglob("*")
         if path.is_file()
+        and (include_feed or path.relative_to(source_dir).as_posix() != "feed.xml")
     }
     last_error = "no attempt made"
     for attempt in range(1, attempts + 1):
@@ -186,20 +189,31 @@ def verify_public(source_dir: Path, public_base_url: str, attempts: int = 12) ->
                         f"{key} size mismatch: public={actual_size}, local={expected_size}"
                     )
 
-            audio_key = next(key for key in expected if key.endswith(".mp3"))
-            request = Request(
-                f"{public_base_url}/{audio_key}",
-                headers={"Range": "bytes=0-1023", "User-Agent": "MikePod/2.0"},
-            )
-            with urlopen(request, timeout=30) as response:
-                if response.status != 206:
-                    raise PublishError(
-                        f"Audio byte-range request returned HTTP {response.status}"
-                    )
-                if len(response.read()) != 1024:
-                    raise PublishError("Audio byte-range response had the wrong length")
-                if not response.headers.get("Content-Range", "").startswith("bytes 0-1023/"):
-                    raise PublishError("Audio response did not include a valid Content-Range")
+            for audio_key in (key for key in expected if key.endswith(".mp3")):
+                request = Request(
+                    f"{public_base_url}/{audio_key}",
+                    headers={
+                        "Range": "bytes=0-1023",
+                        "User-Agent": "MikePod/2.0",
+                    },
+                )
+                with urlopen(request, timeout=30) as response:
+                    if response.status != 206:
+                        raise PublishError(
+                            f"Audio byte-range request returned HTTP {response.status}: "
+                            f"{audio_key}"
+                        )
+                    if len(response.read()) != 1024:
+                        raise PublishError(
+                            f"Audio byte-range response had the wrong length: {audio_key}"
+                        )
+                    if not response.headers.get("Content-Range", "").startswith(
+                        "bytes 0-1023/"
+                    ):
+                        raise PublishError(
+                            f"Audio response did not include a valid Content-Range: "
+                            f"{audio_key}"
+                        )
             print(f"Public origin verified: {public_base_url}")
             return
         except (PublishError, HTTPError, URLError, TimeoutError, ValueError) as exc:
@@ -242,6 +256,14 @@ def publish(
                 temporary_dir,
                 public_base_url,
             )
+        # Verify canonical media URLs only after the objects exist. Probing a
+        # brand-new R2 URL before upload creates a cached 404 at the custom
+        # domain and can strand an otherwise valid immutable object for hours.
+        verify_public(
+            source_dir,
+            public_base_url,
+            include_feed=False,
+        )
         upload_and_verify(
             bucket,
             "feed.xml",

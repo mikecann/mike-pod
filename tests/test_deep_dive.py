@@ -3,7 +3,14 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from deep_dive import collect_source_candidates, validate_dossier, validate_plan
+from deep_dive import (
+    collect_source_candidates,
+    planner_prompt,
+    review_prompt,
+    synthesis_prompt,
+    validate_dossier,
+    validate_plan,
+)
 from personal_context import PersonalContextIndex
 
 
@@ -156,6 +163,22 @@ class DeepDiveValidationTests(unittest.TestCase):
         self.assertEqual(len(candidates), 1)
         self.assertEqual(candidates[0]["url"], "https://example.com/paper")
         self.assertTrue(candidates[0]["present_in_openrouter_annotations"])
+
+    def test_research_prompts_require_high_level_significance(self):
+        plan = planner_prompt("topic", None, [], {})
+        synthesis = synthesis_prompt("topic", {}, [], {}, [])
+        review = review_prompt("topic", {}, [], [], {})
+        compact_synthesis = " ".join(synthesis.split())
+        compact_review = " ".join(review.split())
+
+        self.assertIn("why it matters outside the specialist field", plan)
+        self.assertIn("there are none yet", plan)
+        self.assertIn(
+            "understandable without prior subject-matter knowledge",
+            compact_synthesis,
+        )
+        self.assertIn("before any specialist mechanism", compact_synthesis)
+        self.assertIn("curious generalist", compact_review)
 
 
 if __name__ == "__main__":

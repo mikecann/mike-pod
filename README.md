@@ -22,10 +22,12 @@ generation, RSS publishing or playback.
 4. Claude synthesises a source-linked dossier.
 5. A different model independently reviews the dossier.
 6. Claude writes an accessible single-narrator script only after dossier
-   approval, assuming curiosity and software experience but no physics degree.
+   approval, assuming curiosity but no prior knowledge of the episode's
+   subject. It establishes why the question matters before explaining how the
+   underlying mechanism works.
 7. A different model checks factual support, calibration, personalisation and
-   whether technical ideas are explained with concrete examples and bounded
-   analogies.
+   whether the episode is pitched at a useful conceptual altitude, with the
+   stakes clear before technical ideas, concrete examples and bounded analogies.
 8. ElevenLabs narrates the approved script with David.
 9. `ffmpeg` normalises the mono MP3 to -19 LUFS and a -1 dB true-peak ceiling.
 10. Artwork and audio are uploaded and byte-verified before the RSS feed is
@@ -83,6 +85,22 @@ python3 episode.py \
   --episode-artwork assets/artwork/final/<episode-artwork>.jpg \
   --resume
 ```
+
+To replace a published episode without overwriting its immutable enclosure,
+produce a higher revision of the same episode number. Revision 1 keeps the
+original filenames; later revisions receive a new GUID and public filename:
+
+```bash
+python3 episode.py \
+  --dossier-dir data/deep_dives/<approved-run> \
+  --episode-number 2 \
+  --revision 2 \
+  --episode-slug <ascii-slug> \
+  --draft-only
+```
+
+The feed includes only the highest published revision of each episode. Older
+enclosure bytes remain available at their immutable URLs.
 
 Build the RSS bundle:
 

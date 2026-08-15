@@ -1,4 +1,5 @@
 import json
+import shutil
 import sys
 import tempfile
 import unittest
@@ -15,6 +16,8 @@ from audio_note import AudioNoteError
 from deep_dive import rejected_review_details
 from episode import (
     IDENTITY_FILENAME,
+    audit_prompt,
+    correction_prompt,
     correction_versions,
     episode_names,
     incomplete_correction_version,
@@ -26,7 +29,7 @@ from episode import (
     validate_package,
     writer_prompt,
 )
-from publish import cache_control, content_type
+from publish import cache_control, content_type, upload_and_verify, wrangler
 
 
 class EpisodeGateTests(unittest.TestCase):
@@ -40,12 +43,50 @@ class EpisodeGateTests(unittest.TestCase):
         (dossier_dir / "source_manifest.json").write_text("[]")
         return dossier_dir
 
-    def test_writer_prompt_assumes_no_physics_training(self):
+    def test_writer_prompt_starts_at_a_generalist_altitude(self):
         prompt = writer_prompt({}, {}, [])
 
-        self.assertIn("not a physicist", prompt)
+        self.assertIn("no prior knowledge", prompt)
+        self.assertIn("why anyone should care", prompt)
+        self.assertIn('strict "so what?" test', prompt)
+        self.assertIn("first 200 spoken words", prompt)
+        self.assertIn("before any analogy", prompt)
+        self.assertIn("does not count as motivation", prompt)
+        self.assertIn("without narrating its lab notebook", prompt)
+        self.assertIn("before specialist vocabulary", prompt)
         self.assertIn("where each analogy breaks", prompt)
-        self.assertIn("three or four most useful ideas", prompt)
+        self.assertIn("three most useful ideas", prompt)
+        self.assertIn("two exact measurements", prompt)
+        self.assertIn("one bounded analogy", prompt)
+        self.assertIn("does not catalogue secondary caveats", audit_prompt({}, {}, [], {}))
+
+    def test_auditor_rejects_weeds_first_scripts(self):
+        prompt = audit_prompt({}, {}, [], {})
+        compact_prompt = " ".join(prompt.split())
+
+        self.assertIn("problem, stakes and real-world significance", compact_prompt)
+        self.assertIn("zero prior subject-matter knowledge", compact_prompt)
+        self.assertIn("weeds-first opening", compact_prompt)
+        self.assertIn("individually understandable", compact_prompt)
+        self.assertIn("first 200 spoken words", compact_prompt)
+        self.assertIn("Reject an opening analogy", compact_prompt)
+        self.assertIn("more time on lab implementation", compact_prompt)
+
+    def test_correction_prompt_preserves_high_level_framing(self):
+        prompt = correction_prompt({}, {}, [], {}, {})
+        compact_prompt = " ".join(prompt.split())
+
+        self.assertIn(
+            "establish the problem and stakes before the mechanism",
+            compact_prompt,
+        )
+        self.assertIn('apply the "so what?" test', compact_prompt)
+        self.assertIn("four opening questions", compact_prompt)
+        self.assertIn("prefer qualitative consequence", compact_prompt)
+        self.assertIn("rewrite it from a clean high-level outline", compact_prompt)
+        self.assertIn("Delete technical material aggressively", compact_prompt)
+        self.assertIn("apply only the audit's targeted", compact_prompt)
+        self.assertIn("Do not restructure the episode", compact_prompt)
 
     def test_later_episode_names_do_not_reuse_episode_one(self):
         names = episode_names(2, "quantum-reality")
@@ -53,6 +94,14 @@ class EpisodeGateTests(unittest.TestCase):
         self.assertEqual(names["guid"], "mike-pod-episode-002")
         self.assertEqual(names["audio"], "episode-002-quantum-reality.mp3")
         self.assertEqual(names["public_audio"], "mike-pod-episode-002.mp3")
+
+    def test_revision_uses_a_new_immutable_identity(self):
+        names = episode_names(2, "quantum-reality", revision=2)
+
+        self.assertEqual(names["guid"], "mike-pod-episode-002-r2")
+        self.assertEqual(names["audio"], "episode-002-r2-quantum-reality.mp3")
+        self.assertEqual(names["public_audio"], "mike-pod-episode-002-r2.mp3")
+        self.assertEqual(names["public_artwork"], "mike-pod-episode-002-r2.jpg")
 
     def test_rejects_internal_source_ids_in_spoken_script(self):
         package = {
@@ -112,6 +161,24 @@ class EpisodeGateTests(unittest.TestCase):
                         second_identity,
                         resume=False,
                     )
+
+    def test_revision_requires_the_previous_revision(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            releases = root / "releases"
+            releases.mkdir()
+            dossier = self.write_dossier(root, "dossier")
+            second_revision = make_episode_identity(2, "second", dossier, revision=2)
+
+            with (
+                patch.object(episode, "RELEASES_DIR", releases),
+                self.assertRaisesRegex(AudioNoteError, "requires revision 1"),
+            ):
+                validate_episode_identity(
+                    releases / "episode-002-r2-second",
+                    second_revision,
+                    resume=False,
+                )
 
     def test_output_directory_rejects_a_different_episode(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -306,8 +373,67 @@ class FeedTests(unittest.TestCase):
             self.assertIn("https://podcast.mikecann.app/episodes/", xml)
             self.assertIn("https://podcast.mikecann.app/feed.xml", xml)
 
+    def test_feed_loads_only_the_highest_published_revision(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            releases = Path(temporary)
+            for revision in (1, 2):
+                release = releases / f"episode-002-r{revision}"
+                release.mkdir()
+                (release / "episode.json").write_text(
+                    json.dumps(
+                        {
+                            "episode": 2,
+                            "revision": revision,
+                            "published": True,
+                            "published_at": f"2026-08-{revision:02d}T00:00:00+00:00",
+                        }
+                    )
+                )
+
+            with patch.object(feed, "RELEASES_DIR", releases):
+                loaded = feed.load_releases()
+
+            self.assertEqual(len(loaded), 1)
+            self.assertEqual(loaded[0][1]["revision"], 2)
+
+    def test_public_bundle_prunes_superseded_revision_files(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            output = root / "output"
+            release = root / "release"
+            output.joinpath("artwork").mkdir(parents=True)
+            output.joinpath("episodes").mkdir()
+            release.mkdir()
+            output.joinpath("artwork", "old.jpg").write_bytes(b"old")
+            output.joinpath("episodes", "old.mp3").write_bytes(b"old")
+            release.joinpath("audio.mp3").write_bytes(b"new audio")
+            release.joinpath("art.jpg").write_bytes(b"new art")
+            episode_metadata = {
+                "guid": "mike-pod-episode-002-r2",
+                "audio_filename": "audio.mp3",
+                "episode_artwork_filename": "art.jpg",
+                "public_audio_filename": "new.mp3",
+                "public_artwork_filename": "new.jpg",
+                "audio_bytes": 9,
+            }
+
+            with patch.object(feed, "SHOW_ARTWORK_SOURCE", release / "art.jpg"):
+                feed.prepare_public_files(output, [(release, episode_metadata)])
+
+            self.assertFalse(output.joinpath("artwork", "old.jpg").exists())
+            self.assertFalse(output.joinpath("episodes", "old.mp3").exists())
+            self.assertTrue(output.joinpath("artwork", "new.jpg").exists())
+            self.assertTrue(output.joinpath("episodes", "new.mp3").exists())
+
 
 class PublisherTests(unittest.TestCase):
+    def test_publisher_uses_installed_authenticated_wrangler(self):
+        with patch("publish.subprocess.run") as run:
+            wrangler(["r2", "object", "get", "bucket/key"])
+
+        command = run.call_args.args[0]
+        self.assertEqual(command[:4], ["wrangler", "r2", "object", "get"])
+
     def test_podcast_media_is_immutable_but_feed_is_short_lived(self):
         self.assertIn("immutable", cache_control("episodes/episode.mp3"))
         self.assertIn("max-age=300", cache_control("feed.xml"))
@@ -317,6 +443,37 @@ class PublisherTests(unittest.TestCase):
             content_type(Path("feed.xml")),
             "application/rss+xml; charset=utf-8",
         )
+
+    def test_new_episode_is_not_publicly_probed_before_upload(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "episode.mp3"
+            source.write_bytes(b"approved audio")
+            remote_calls = 0
+
+            def remote_copy_side_effect(bucket, key, destination):
+                nonlocal remote_calls
+                remote_calls += 1
+                if remote_calls == 1:
+                    return False
+                shutil.copy2(source, destination)
+                return True
+
+            with (
+                patch("publish.remote_copy", side_effect=remote_copy_side_effect),
+                patch("publish.upload") as upload,
+                patch("publish.public_copy") as public_copy,
+            ):
+                upload_and_verify(
+                    "bucket",
+                    "episodes/new.mp3",
+                    source,
+                    root,
+                    "https://podcast.example",
+                )
+
+            upload.assert_called_once()
+            public_copy.assert_not_called()
 
 
 if __name__ == "__main__":

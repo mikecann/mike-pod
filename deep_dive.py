@@ -520,11 +520,14 @@ def planner_prompt(
 
         Create four to six genuinely different research branches. Together they
         must cover:
+        - the high-level problem, why it matters outside the specialist field,
+          what success could eventually enable, and what the new result changes;
         - the strongest formal or mechanistic account;
         - empirical evidence, predictions, or falsifiability;
         - the best serious criticism or competing explanation;
         - one surprising adjacent connection that the evidence suggests;
-        - practical implications if there are any.
+        - present practical implications, including a well-supported conclusion
+          that there are none yet when that is the honest answer.
 
         Each branch needs two to four web searches and a disconfirming question.
         Prefer primary papers, experimental results, official technical material
@@ -907,6 +910,12 @@ def synthesis_prompt(
 
         Requirements:
         - Answer each branch separately, then expose connections between them.
+        - Make `why_mike_might_care` understandable without prior subject-matter
+          knowledge. Explain the broad problem, what is at stake, what success
+          could enable, and what this evidence changes compared with the prior
+          state of the field.
+        - Design `episode_arc.opening` to establish that high-level significance
+          before any specialist mechanism, vocabulary or implementation detail.
         - Cite only supplied S-prefixed source IDs for factual conclusions.
         - Cite only supplied P-prefixed evidence IDs for claims about Mike.
         - A search highlight is discovery evidence, not equivalent to a complete
@@ -961,7 +970,9 @@ def review_prompt(
         results are confused with empirical evidence, a serious opposing view is
         absent, search highlights are overtreated as full sources, or Mike's
         preferences are invented rather than cited. Also block a merely generic
-        overview that does not earn its personal relevance.
+        overview that does not earn its personal relevance. Block a dossier that
+        cannot explain the problem, stakes and significance to a curious
+        generalist before introducing the specialist mechanism.
         """
     ).strip()
 

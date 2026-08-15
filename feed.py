@@ -58,11 +58,29 @@ def qname(namespace: str, name: str) -> ET.QName:
 
 
 def load_releases() -> list[tuple[Path, dict[str, Any]]]:
-    releases: list[tuple[Path, dict[str, Any]]] = []
+    latest_by_episode: dict[int, tuple[Path, dict[str, Any]]] = {}
     for metadata_path in RELEASES_DIR.glob("*/episode.json"):
         metadata = read_json(metadata_path)
-        if metadata.get("published") is True:
-            releases.append((metadata_path.parent, metadata))
+        if metadata.get("published") is not True:
+            continue
+        episode_number = metadata.get("episode")
+        revision = metadata.get("revision", 1)
+        if not isinstance(episode_number, int) or episode_number < 1:
+            raise FeedError(f"Invalid episode number in {metadata_path}")
+        if not isinstance(revision, int) or revision < 1:
+            raise FeedError(f"Invalid episode revision in {metadata_path}")
+        existing = latest_by_episode.get(episode_number)
+        if existing is not None:
+            existing_revision = existing[1].get("revision", 1)
+            if existing_revision == revision:
+                raise FeedError(
+                    f"Duplicate published revision {revision} for episode "
+                    f"{episode_number}"
+                )
+            if existing_revision > revision:
+                continue
+        latest_by_episode[episode_number] = (metadata_path.parent, metadata)
+    releases = list(latest_by_episode.values())
     releases.sort(key=lambda item: item[1]["published_at"], reverse=True)
     return releases
 
@@ -75,6 +93,21 @@ def prepare_public_files(
     episode_dir = output_dir / "episodes"
     artwork_dir.mkdir(parents=True, exist_ok=True)
     episode_dir.mkdir(parents=True, exist_ok=True)
+
+    expected_artwork = {"mike-pod-show-artwork.jpg"}
+    expected_audio: set[str] = set()
+    for _, episode in releases:
+        expected_artwork.add(episode["public_artwork_filename"])
+        expected_audio.add(episode["public_audio_filename"])
+
+    # dist/podcast is a generated bundle. Remove files left by superseded
+    # revisions so the publisher verifies and uploads only the live feed set.
+    for path in artwork_dir.iterdir():
+        if path.is_file() and path.name not in expected_artwork:
+            path.unlink()
+    for path in episode_dir.iterdir():
+        if path.is_file() and path.name not in expected_audio:
+            path.unlink()
 
     if not SHOW_ARTWORK_SOURCE.exists():
         raise FeedError(f"Show artwork is missing: {SHOW_ARTWORK_SOURCE}")

@@ -17,6 +17,7 @@ from deep_dive import rejected_review_details
 from episode import (
     IDENTITY_FILENAME,
     audit_prompt,
+    combine_script_audits,
     correction_prompt,
     correction_versions,
     episode_names,
@@ -58,6 +59,9 @@ class EpisodeGateTests(unittest.TestCase):
         self.assertIn("three most useful ideas", prompt)
         self.assertIn("two exact measurements", prompt)
         self.assertIn("one bounded analogy", prompt)
+        self.assertIn("final third should be", prompt)
+        self.assertIn("three ordinary sentences", prompt)
+        self.assertIn("decisive follow-up evidence", prompt)
         self.assertIn("does not catalogue secondary caveats", audit_prompt({}, {}, [], {}))
 
     def test_auditor_rejects_weeds_first_scripts(self):
@@ -71,6 +75,9 @@ class EpisodeGateTests(unittest.TestCase):
         self.assertIn("first 200 spoken words", compact_prompt)
         self.assertIn("Reject an opening analogy", compact_prompt)
         self.assertIn("more time on lab implementation", compact_prompt)
+        self.assertIn("accessibility does not decay in the final third", compact_prompt)
+        self.assertIn("after hearing only the final minute", compact_prompt)
+        self.assertIn("historical arc", compact_prompt)
 
     def test_correction_prompt_preserves_high_level_framing(self):
         prompt = correction_prompt({}, {}, [], {}, {})
@@ -87,6 +94,33 @@ class EpisodeGateTests(unittest.TestCase):
         self.assertIn("Delete technical material aggressively", compact_prompt)
         self.assertIn("apply only the audit's targeted", compact_prompt)
         self.assertIn("Do not restructure the episode", compact_prompt)
+        self.assertIn("final third at least as accessible", compact_prompt)
+        self.assertIn("Claude Fable and Grok", compact_prompt)
+
+    def test_script_panel_requires_both_clean_approvals(self):
+        clean = {
+            "approved": True,
+            "factual_issues": [],
+            "calibration_issues": [],
+            "personalisation_issues": [],
+            "accessibility_issues": [],
+            "required_edits": [],
+            "assessment": "Clear",
+        }
+        late_jargon = dict(
+            clean,
+            approved=False,
+            accessibility_issues=["Final third introduces unexplained jargon"],
+        )
+
+        combined = combine_script_audits({"claude": clean, "grok": late_jargon})
+
+        self.assertFalse(combined["approved"])
+        self.assertEqual(
+            combined["panel_approvals"],
+            {"claude": True, "grok": False},
+        )
+        self.assertIn("[Grok]", combined["accessibility_issues"][0])
 
     def test_later_episode_names_do_not_reuse_episode_one(self):
         names = episode_names(2, "quantum-reality")

@@ -12,6 +12,7 @@ data/chroma_db/
 data/automation/
 data/deep_research/
 data/deep_dives/
+data/topic_panels/
 data/audio_notes/
 data/releases/
 dist/

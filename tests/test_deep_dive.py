@@ -5,6 +5,8 @@ from pathlib import Path
 
 from deep_dive import (
     collect_source_candidates,
+    combine_dossier_reviews,
+    eligible_topic_candidates,
     planner_prompt,
     review_prompt,
     synthesis_prompt,
@@ -162,7 +164,7 @@ class DeepDiveValidationTests(unittest.TestCase):
 
         self.assertEqual(len(candidates), 1)
         self.assertEqual(candidates[0]["url"], "https://example.com/paper")
-        self.assertTrue(candidates[0]["present_in_openrouter_annotations"])
+        self.assertTrue(candidates[0]["present_in_search_annotations"])
 
     def test_research_prompts_require_high_level_significance(self):
         plan = planner_prompt("topic", None, [], {})
@@ -179,7 +181,42 @@ class DeepDiveValidationTests(unittest.TestCase):
         )
         self.assertIn("before any specialist mechanism", compact_synthesis)
         self.assertIn("curious generalist", compact_review)
+        self.assertIn("chronological evidence branch", plan)
+        self.assertIn("refutation attempts", compact_synthesis)
+        self.assertIn("historical context", compact_review)
 
+    def test_unpublished_explicit_prompts_take_priority_for_topic_panel(self):
+        topics = {
+            "active_prompts": [
+                {"id": "done", "status": "published"},
+                {"id": "new", "status": "idea"},
+            ],
+            "enduring_interests": [{"id": "space"}],
+        }
+
+        candidates = eligible_topic_candidates(topics)
+
+        self.assertEqual([candidate["id"] for candidate in candidates], ["new"])
+
+    def test_dossier_panel_requires_both_reviewers_to_approve(self):
+        clean = {
+            "approved_for_script": True,
+            "strengths": ["Strong"],
+            "issues": [],
+            "missing_perspectives": [],
+            "personalisation_assessment": "Grounded",
+            "source_quality_assessment": "Good",
+            "next_action": "write_script",
+        }
+        rejected = dict(clean, approved_for_script=False, next_action="research_more")
+
+        combined = combine_dossier_reviews({"claude": clean, "grok": rejected})
+
+        self.assertFalse(combined["approved_for_script"])
+        self.assertEqual(
+            combined["panel_approvals"],
+            {"claude": True, "grok": False},
+        )
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Turn an approved deep-research dossier into a publishable Mike Pod episode.
 
-The dossier is the evidence boundary. Claude writes the episode, a different
-model checks its claims and calibration, then ElevenLabs narrates the approved
-script with David. Publishing remains a separate, feed-last operation.
+The dossier is the evidence boundary. Flagship OpenAI writes the episode,
+Claude Fable and Grok independently critique it, and OpenAI revises from both
+sets of notes. ElevenLabs narrates only after both peers approve. Publishing
+remains a separate, feed-last operation.
 """
 
 from __future__ import annotations
@@ -23,16 +24,21 @@ from PIL import Image, UnidentifiedImageError
 from audio_note import (
     DEFAULT_VOICE,
     AudioNoteError,
-    call_openrouter,
     generate_elevenlabs_audio,
     inspect_audio,
     elevenlabs_subscription,
     load_elevenlabs_key,
-    load_openrouter_key,
     normalise_audio,
     remaining_credits,
     wait_for_subscription_update,
     write_json,
+)
+from ensemble import (
+    CLAUDE_CANONICAL_MODEL,
+    GROK_MODEL,
+    OPENAI_MODEL,
+    call_openai_cli,
+    run_panel,
 )
 
 
@@ -42,11 +48,22 @@ SHOW_ARTWORK = BASE_DIR / "assets" / "artwork" / "final" / "mike-pod-show-artwor
 IDENTITY_FILENAME = "episode_identity.json"
 DOSSIER_IDENTITY_FILES = ("dossier.json", "review.json", "source_manifest.json")
 
-WRITER_MODEL = "anthropic/claude-sonnet-5"
-AUDIT_MODEL = "openai/gpt-5.6-terra"
+WRITER_MODEL = f"openai/{OPENAI_MODEL}"
 MIN_WORDS = 950
 MAX_WORDS = 1_500
 MAX_TTS_CHARACTERS = 14_500
+
+
+def call_sol(
+    *,
+    system_prompt: str,
+    user_prompt: str,
+    response_schema: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Run drafting and revision through the authenticated Codex CLI."""
+
+    prompt = f"{system_prompt.strip()}\n\n{user_prompt.strip()}"
+    return call_openai_cli(prompt, response_schema)
 
 PACKAGE_SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -213,6 +230,10 @@ Editorial requirements:
 - Build the spoken story around the three most useful ideas. Combine or
   omit lower-value branches instead of cramming the whole dossier into audio,
   while retaining the strongest criticism and disconfirming evidence.
+- Give Mike the minimum useful backstory. Trace the central claim from the
+  important earlier work through the decisive follow-up evidence, correction or
+  refutation and into the newest papers. Use chronology to show what changed,
+  not as a roll-call of researchers, dates or paper titles.
 - Give the strongest fair account of the central idea before testing it.
 - Separate established findings, source-authored interpretations, and open
   questions whenever they could be confused.
@@ -239,10 +260,17 @@ Editorial requirements:
   it does not yet let them do, and why the distinction matters. A listener who
   follows every sentence but cannot explain the significance has not been
   served by the script.
+- Accessibility must not decay after a clear opening. The final third should be
+  at least as easy to follow as the first third. Do not introduce a new acronym,
+  named mechanism or abstraction in the final third unless the conclusion is
+  impossible without it. Restate any unavoidable late technical point in
+  ordinary language and immediately say why it changes the conclusion.
 - Keep sentences conversational. Do not use equations, unexplained initialisms,
   or dense lists of specialist terms in the spoken script.
-- End with a useful evidential ladder or decision rule and the most interesting
-  next question, not a generic recap or call to action.
+- End with a plain-English evidential ladder or decision rule and the most
+  interesting next question, not a generic recap or call to action. The final
+  minute must let Mike tell a friend, in three ordinary sentences, what the work
+  was trying to achieve, what changed, and what remains out of reach.
 - Attribute claims naturally by author, paper, project, journal, or institution.
   Never speak internal source IDs.
 - Use Australian English. No fake co-host, banter, stage directions, SSML,
@@ -290,6 +318,9 @@ Set approved true only when:
   the reviewed sources;
 - the dossier's disconfirming branch and strongest serious criticism are
   represented fairly rather than rhetorically;
+- the useful historical arc is present: the earlier claim, the important
+  follow-up evidence, and the strongest later correction or refutation are
+  connected to what the newest work changed;
 - personalisation follows the dossier and does not invent Mike's beliefs;
 - the first 200 spoken words, before any analogy, explain the larger goal, the
   blocker, why the result is meaningful progress, and what it still cannot do;
@@ -308,6 +339,12 @@ Set approved true only when:
   listener needs them to understand the conclusion;
 - the spoken script uses no more than two exact measurements unless additional
   figures are indispensable, and it does not catalogue secondary caveats;
+- accessibility does not decay in the final third: it adds no dispensable late
+  jargon or abstraction stack, translates unavoidable technical ideas back to
+  ordinary language, and keeps connecting them to the conclusion;
+- after hearing only the final minute, a curious generalist could explain the
+  goal, what changed, why it matters and what remains out of reach without
+  repeating specialist vocabulary;
 - the episode does not imply decisive validation or refutation beyond what the
   approved dossier supports;
 - metadata source IDs accurately support the represented sections.
@@ -320,8 +357,10 @@ Do not approve a script merely because each technical sentence is individually
 understandable. Reject an opening analogy that arrives before the larger goal
 and stakes. Reject a script that spends more time on lab implementation and
 measurements than on meaning, consequence and the evidential bottom line. Treat
-other style preferences as issues only when they would make the episode
-misleading, generic, or poor to listen to.
+late jargon, a final-third difficulty spike, or a technically phrased ending
+that Mike could not restate as `accessibility_issues`. Treat other style
+preferences as issues only when they would make the episode misleading,
+generic, or poor to listen to.
 """.strip()
 
 
@@ -334,6 +373,8 @@ def correction_prompt(
 ) -> str:
     return f"""
 Correct this Mike Pod episode once, applying every required edit from the audit.
+The audit combines independent Claude Fable and Grok reviews. Resolve both
+reviewers' concerns rather than choosing the easier interpretation.
 
 APPROVED DOSSIER:
 {json.dumps(dossier, ensure_ascii=False)}
@@ -365,6 +406,13 @@ first 200 words before any analogy, prefer qualitative consequence over lab
 figures, introduce one abstraction at a time, use immediate plain-language
 definitions, and include concrete or carefully bounded analogies for the major
 ideas.
+
+Keep the final third at least as accessible as the opening. Remove dispensable
+late jargon, acronyms and named mechanisms. Translate any unavoidable late
+technical point into ordinary language, say immediately why it changes the
+conclusion, and make the final minute independently understandable as: the goal,
+what changed, why it matters, and what remains out of reach. Preserve the useful
+history and strongest refutation, but do not turn the ending into a paper list.
 
 If the draft is at the wrong conceptual altitude, rewrite it from a clean
 high-level outline instead of patching sentences in place. Delete technical
@@ -435,6 +483,72 @@ def validate_audit(audit: dict[str, Any]) -> list[str]:
         elif value:
             errors.append(f"{key} contains {len(value)} issue(s)")
     return errors
+
+
+def combine_script_audits(
+    audits: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    """Approve only when Fable and Grok both return completely clean audits."""
+
+    provider_labels = {"claude": "Claude Fable", "grok": "Grok"}
+    issue_keys = (
+        "factual_issues",
+        "calibration_issues",
+        "personalisation_issues",
+        "accessibility_issues",
+        "required_edits",
+    )
+    combined: dict[str, Any] = {key: [] for key in issue_keys}
+    assessments: list[str] = []
+    approvals: dict[str, bool] = {}
+    for provider in ("claude", "grok"):
+        audit = audits.get(provider)
+        if not isinstance(audit, dict):
+            raise AudioNoteError(f"Missing script audit from {provider}")
+        label = provider_labels[provider]
+        clean = audit.get("approved") is True
+        for key in issue_keys:
+            values = audit.get(key)
+            if not isinstance(values, list):
+                clean = False
+                combined[key].append(f"[{label}] {key} was not returned as a list")
+                continue
+            if values:
+                clean = False
+            combined[key].extend(f"[{label}] {value}" for value in values)
+        approvals[provider] = clean
+        assessments.append(f"[{label}] {audit.get('assessment', '')}".strip())
+    combined.update(
+        {
+            "approved": all(approvals.values()),
+            "assessment": "\n".join(assessments),
+            "panel_approvals": approvals,
+        }
+    )
+    return combined
+
+
+def run_script_audit_panel(
+    prompt: str,
+) -> tuple[dict[str, Any], dict[str, dict[str, Any]], dict[str, dict[str, Any]]]:
+    audits, metadata = run_panel(
+        prompt,
+        AUDIT_SCHEMA,
+        providers=("claude", "grok"),
+    )
+    return combine_script_audits(audits), audits, metadata
+
+
+def write_script_panel_results(
+    release_dir: Path,
+    *,
+    version: int,
+    audits: dict[str, dict[str, Any]],
+    metadata: dict[str, dict[str, Any]],
+) -> None:
+    write_json(release_dir / f"audit_fable_v{version}.json", audits["claude"])
+    write_json(release_dir / f"audit_grok_v{version}.json", audits["grok"])
+    write_json(release_dir / f"audit_panel_usage_v{version}.json", metadata)
 
 
 def duration_text(seconds: float | None) -> str:
@@ -709,8 +823,6 @@ def generate(args: argparse.Namespace) -> int:
     sources = compact_sources(manifest)
     source_by_id = {source["source_id"]: source for source in sources}
     valid_ids = set(source_by_id)
-    openrouter_key = load_openrouter_key()
-
     if args.resume:
         approved_package = release_dir / "package.json"
         correction_candidate = release_dir / "corrected_draft.json"
@@ -719,35 +831,27 @@ def generate(args: argparse.Namespace) -> int:
         )
         audit = read_json(resume_audit_path(release_dir))
     else:
-        package, writer_usage = call_openrouter(
-            openrouter_key,
-            model=args.writer_model,
+        package, writer_usage = call_sol(
             system_prompt=(
                 "You are the senior writer of a rigorous personal research podcast. "
                 "Write for the ear, preserve uncertainty, and never invent personal facts."
             ),
             user_prompt=writer_prompt(dossier, review, sources),
-            max_tokens=7_500,
             response_schema=PACKAGE_SCHEMA,
-            schema_name="mike_pod_research_episode",
         )
         write_json(release_dir / "draft.json", package)
         write_json(release_dir / "writer_usage.json", writer_usage)
 
-        audit, audit_usage = call_openrouter(
-            openrouter_key,
-            model=args.audit_model,
-            system_prompt=(
-                "You are an exacting independent science editor. Reject subtle "
-                "overclaiming, invented personalisation, and unsupported certainty."
-            ),
-            user_prompt=audit_prompt(dossier, review, sources, package),
-            max_tokens=3_500,
-            response_schema=AUDIT_SCHEMA,
-            schema_name="mike_pod_episode_audit",
+        audit, peer_audits, audit_usage = run_script_audit_panel(
+            audit_prompt(dossier, review, sources, package)
         )
         write_json(release_dir / "audit_v1.json", audit)
-        write_json(release_dir / "audit_usage_v1.json", audit_usage)
+        write_script_panel_results(
+            release_dir,
+            version=1,
+            audits=peer_audits,
+            metadata=audit_usage,
+        )
 
     existing_corrections = correction_versions(release_dir)
     first_correction_number = max(existing_corrections, default=0) + 1
@@ -764,24 +868,17 @@ def generate(args: argparse.Namespace) -> int:
         if interrupted_correction is not None and not approved_package.exists():
             # The correction was written but its independent audit never completed.
             # Re-run that audit instead of copying a stale result into the gap.
-            audit, audit_usage = call_openrouter(
-                openrouter_key,
-                model=args.audit_model,
-                system_prompt=(
-                    "You are an exacting independent science editor. Reject subtle "
-                    "overclaiming, invented personalisation, and unsupported certainty."
-                ),
-                user_prompt=audit_prompt(dossier, review, sources, package),
-                max_tokens=3_500,
-                response_schema=AUDIT_SCHEMA,
-                schema_name="mike_pod_episode_audit",
+            audit, peer_audits, audit_usage = run_script_audit_panel(
+                audit_prompt(dossier, review, sources, package)
             )
             audit_version = interrupted_correction + 1
             write_json(release_dir / "audit.json", audit)
             write_json(release_dir / f"audit_v{audit_version}.json", audit)
-            write_json(
-                release_dir / f"audit_usage_v{audit_version}.json",
-                audit_usage,
+            write_script_panel_results(
+                release_dir,
+                version=audit_version,
+                audits=peer_audits,
+                metadata=audit_usage,
             )
 
     package_errors = validate_package(package, valid_ids)
@@ -793,16 +890,12 @@ def generate(args: argparse.Namespace) -> int:
     ):
         if not package_errors and not audit_errors:
             break
-        package, correction_usage = call_openrouter(
-            openrouter_key,
-            model=args.writer_model,
+        package, correction_usage = call_sol(
             system_prompt=(
                 "You are correcting a science podcast under a strict independent audit."
             ),
             user_prompt=correction_prompt(dossier, review, sources, package, audit),
-            max_tokens=7_500,
             response_schema=PACKAGE_SCHEMA,
-            schema_name="mike_pod_corrected_episode",
         )
         write_json(release_dir / "corrected_draft.json", package)
         write_json(
@@ -814,23 +907,17 @@ def generate(args: argparse.Namespace) -> int:
             correction_usage,
         )
         package_errors = validate_package(package, valid_ids)
-        audit, audit_usage = call_openrouter(
-            openrouter_key,
-            model=args.audit_model,
-            system_prompt=(
-                "You are an exacting independent science editor. Reject subtle "
-                "overclaiming, invented personalisation, and unsupported certainty."
-            ),
-            user_prompt=audit_prompt(dossier, review, sources, package),
-            max_tokens=3_500,
-            response_schema=AUDIT_SCHEMA,
-            schema_name="mike_pod_episode_audit",
+        audit, peer_audits, audit_usage = run_script_audit_panel(
+            audit_prompt(dossier, review, sources, package)
         )
+        audit_version = correction_number + 1
         write_json(release_dir / "audit.json", audit)
-        write_json(release_dir / f"audit_v{correction_number + 1}.json", audit)
-        write_json(
-            release_dir / f"audit_usage_v{correction_number + 1}.json",
-            audit_usage,
+        write_json(release_dir / f"audit_v{audit_version}.json", audit)
+        write_script_panel_results(
+            release_dir,
+            version=audit_version,
+            audits=peer_audits,
+            metadata=audit_usage,
         )
         audit_errors = validate_audit(audit)
 
@@ -935,7 +1022,7 @@ def generate(args: argparse.Namespace) -> int:
         "dossier_path": identity["dossier"]["path"],
         "dossier_sha256": identity["dossier"]["sha256"],
         "writer_model": args.writer_model,
-        "audit_model": args.audit_model,
+        "audit_models": [CLAUDE_CANONICAL_MODEL, GROK_MODEL],
         "voice": DEFAULT_VOICE,
     }
     write_json(release_dir / "episode.json", episode)
@@ -956,7 +1043,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--episode-artwork", type=Path)
     parser.add_argument("--output-dir", type=Path)
     parser.add_argument("--writer-model", default=WRITER_MODEL)
-    parser.add_argument("--audit-model", default=AUDIT_MODEL)
     parser.add_argument("--draft-only", action="store_true")
     parser.add_argument(
         "--resume",

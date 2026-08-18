@@ -7,18 +7,30 @@ live publishing path.
 
 - Select one question from Mike's active prompts or enduring interests in
   `research_topics.json`. Prefer a prompt whose status is not `published`, then
-  rotate enduring interests. Do not repeat a published episode.
+  rotate enduring interests. Do not repeat a published episode. When Mike has
+  not supplied the exact question, require GPT-5.6 Sol, Claude Fable 5 through
+  Claude CLI, and Grok 4.6 through Grok CLI to rank the eligible topics. Sol
+  chairs the final choice after seeing every recommendation and disagreement.
 - Use StashIt and the local personal-context corpus only as evidence of what Mike
   has read, saved, written or commented on. They are not the episode queue and
   they do not prove private listening history.
 - Build a branching research dossier with mechanisms, empirical evidence,
   criticism, an adjacent connection, practical implications and at least one
   disconfirming branch.
+- Include a chronological evidence branch. Start with the important earlier
+  claim, trace decisive follow-up work, and reach the newest primary evidence,
+  correction, criticism and attempted refutation. Use history to explain what
+  changed, not as a list of dates and paper titles.
 - Prefer primary sources, papers and official technical material. Include
   serious opposition and distinguish project-authored claims from independent
   validation.
-- A second model must approve the dossier before scripting. A separate audit
-  must approve the script before narration.
+- GPT-5.6 Sol is the lead research, synthesis and writing model. Grok CLI does
+  live source discovery with only its web tools enabled; every selected URL is
+  independently fetched and snapshotted before Sol can use it. Claude Fable
+  and Grok are independent peers. Both peers must explicitly approve the
+  dossier before scripting and both must return clean final script audits before
+  narration. Missing CLI access, malformed output or one dissent is a failed
+  gate, never permission to fall back to a different model.
 - Write for one curious generalist who happens to build software. Assume no
   prior knowledge of the episode's subject. Software experience is useful
   context for an occasional analogy, not permission to pitch the episode at an
@@ -57,6 +69,16 @@ live publishing path.
   stakes, or explains terms individually while leaving the overall significance
   unclear. It must also reject scripts that stack technical terms without
   returning to a concrete example and a plain-language "why this matters".
+- Accessibility must not decay after a strong opening. The final third must be
+  at least as easy to follow as the first, must not introduce dispensable jargon
+  or abstractions, and must translate unavoidable late technical points back to
+  ordinary language and their consequence. The final minute must let Mike tell
+  a friend the goal, what changed, why it matters, and what remains out of reach
+  without needing specialist vocabulary.
+- Fable and Grok critique each draft separately. Sol must refine the script from
+  both critiques. Do not narrate until both peers independently approve with
+  empty factual, calibration, personalisation, accessibility and required-edit
+  arrays.
 - Narrate with David in ElevenLabs, then normalise mono audio to -19 LUFS with a
   -1 dB true-peak ceiling.
 
@@ -83,6 +105,7 @@ live publishing path.
 Do not publish an episode when:
 
 - either independent editorial gate is not approved;
+- Fable or Grok is unavailable, fails structured output, or withholds approval;
 - the evidence set cannot support the main conclusion;
 - source IDs are spoken in the script or factual claims lose their attribution;
 - ElevenLabs lacks sufficient credits;

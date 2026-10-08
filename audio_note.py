@@ -19,6 +19,7 @@ import subprocess
 import sys
 import textwrap
 import time
+import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 from html.parser import HTMLParser
 from pathlib import Path
@@ -36,8 +37,12 @@ DEFAULT_STASHIT_ENV = DEFAULT_STASHIT_DIR.parent.parent / "apps" / "client" / ".
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 DEFAULT_OPENROUTER_MODEL = "anthropic/claude-sonnet-5"
 DEFAULT_CLAIM_AUDIT_MODEL = "openai/gpt-5.6-terra"
-DEFAULT_ELEVENLABS_MODEL = "eleven_multilingual_v2"
+# Flash keeps the selected David voice and Australian English support while
+# charging half the base credits of Multilingual v2. That matters because the
+# production API key has a stricter credit cap than the workspace subscription.
+DEFAULT_ELEVENLABS_MODEL = "eleven_flash_v2_5"
 DEFAULT_OUTPUT_FORMAT = "mp3_44100_128"
+FINAL_AUDIO_BITRATE_KBPS = 112
 
 # The full pilot uses a calm, Australian technical narrator. The two alternatives
 # are deliberately different enough to make the listening test meaningful.
@@ -437,10 +442,28 @@ def choose_item(items: list[dict[str, Any]], item_id: str | None) -> dict[str, A
 
 
 def fetch_live_article(url: str, max_chars: int = 50_000) -> str:
-    request = Request(
+    fetch_url = url
+    pmc_match = re.fullmatch(
+        r"https?://(?:www\.)?pmc\.ncbi\.nlm\.nih\.gov/articles/(PMC\d+)/?",
         url,
+    )
+    if pmc_match:
+        # The normal PMC article page can return a tiny anti-bot shell to
+        # non-browser clients. Europe PMC exposes the same open-access article
+        # through an official JATS full-text endpoint that is stable for
+        # provenance snapshots.
+        fetch_url = (
+            "https://www.ebi.ac.uk/europepmc/webservices/rest/"
+            f"{pmc_match.group(1)}/fullTextXML"
+        )
+
+    request = Request(
+        fetch_url,
         headers={
-            "Accept": "text/html,application/xhtml+xml,text/plain;q=0.9,*/*;q=0.8",
+            "Accept": (
+                "application/xml,text/xml,text/html,application/xhtml+xml,"
+                "text/plain;q=0.9,*/*;q=0.8"
+            ),
             "User-Agent": "MikePod/2.0 (+personal audio-note pilot)",
         },
     )
@@ -455,7 +478,17 @@ def fetch_live_article(url: str, max_chars: int = 50_000) -> str:
         raise AudioNoteError(f"Could not fetch article {url}: {exc}") from exc
 
     decoded = raw.decode(charset, errors="replace")
-    if content_type in {"text/html", "application/xhtml+xml"} or "<html" in decoded[:500].lower():
+    if content_type in {"application/xml", "text/xml"} or re.search(
+        r"<(?:\?xml|!DOCTYPE\s+article|article\b)",
+        decoded[:1000],
+        flags=re.IGNORECASE,
+    ):
+        try:
+            root = ET.fromstring(decoded)
+        except ET.ParseError as exc:
+            raise AudioNoteError(f"Could not parse article XML: {url}") from exc
+        decoded = re.sub(r"\s+", " ", " ".join(root.itertext())).strip()
+    elif content_type in {"text/html", "application/xhtml+xml"} or "<html" in decoded[:500].lower():
         parser = ReadableHTMLParser()
         parser.feed(decoded)
         decoded = parser.text()
@@ -905,7 +938,7 @@ def normalise_audio(raw_file: Path, final_file: Path) -> None:
             "-ac",
             "1",
             "-b:a",
-            "128k",
+            f"{FINAL_AUDIO_BITRATE_KBPS}k",
             str(final_file),
         ],
         capture_output=True,
@@ -950,7 +983,7 @@ def inspect_audio(audio_file: Path) -> dict[str, Any]:
         "true_peak_dbfs": float(peak_matches[-1]) if peak_matches else None,
         "sample_rate_hz": 44100,
         "channels": 1,
-        "bitrate_kbps": 128,
+        "bitrate_kbps": FINAL_AUDIO_BITRATE_KBPS,
         "normalisation_target": {
             "integrated_lufs": -19,
             "true_peak_dbfs": -1,

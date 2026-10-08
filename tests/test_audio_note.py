@@ -1,12 +1,38 @@
 import unittest
+from unittest.mock import patch
 
 from audio_note import (
     ReadableHTMLParser,
+    fetch_live_article,
     sample_excerpt,
     slugify,
     validate_claim_audit,
     validate_package,
 )
+
+
+class _Headers:
+    def get_content_charset(self):
+        return "utf-8"
+
+    def get_content_type(self):
+        return "application/xml"
+
+
+class _Response:
+    headers = _Headers()
+
+    def __init__(self, payload):
+        self.payload = payload
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        return False
+
+    def read(self, _limit):
+        return self.payload
 
 
 class ReadableHTMLParserTests(unittest.TestCase):
@@ -28,6 +54,25 @@ class ReadableHTMLParserTests(unittest.TestCase):
         self.assertNotIn("Site chrome", parser.text())
         self.assertNotIn("ignoreMe", parser.text())
         self.assertNotIn("Copyright", parser.text())
+
+    @patch("audio_note.urlopen")
+    def test_pmc_articles_use_europe_pmc_full_text_xml(self, mock_urlopen):
+        body = " ".join(["Primary result and controls."] * 30)
+        mock_urlopen.return_value = _Response(
+            f"<?xml version='1.0'?><article><body><p>{body}</p></body></article>".encode()
+        )
+
+        text = fetch_live_article(
+            "https://pmc.ncbi.nlm.nih.gov/articles/PMC8670470/"
+        )
+
+        requested = mock_urlopen.call_args.args[0]
+        self.assertEqual(
+            requested.full_url,
+            "https://www.ebi.ac.uk/europepmc/webservices/rest/PMC8670470/fullTextXML",
+        )
+        self.assertIn("Primary result and controls.", text)
+        self.assertNotIn("<article>", text)
 
 
 class PackageValidationTests(unittest.TestCase):

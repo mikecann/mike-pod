@@ -18,6 +18,7 @@ import json
 import shutil
 import subprocess
 import tempfile
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any, Iterable
@@ -148,42 +149,65 @@ def call_openai_cli(
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Call flagship OpenAI through Codex without granting workspace writes."""
 
-    with tempfile.TemporaryDirectory(prefix="mike-pod-codex-") as temporary:
-        root = Path(temporary)
-        schema_path = root / "schema.json"
-        output_path = root / "result.json"
-        schema_path.write_text(json.dumps(schema))
-        command = [
-            _tool_path("codex"),
-            "exec",
-            "-m",
-            OPENAI_MODEL,
-            "--sandbox",
-            "read-only",
-            "--ephemeral",
-            "--ignore-user-config",
-            "--ignore-rules",
-            "--output-schema",
-            str(schema_path),
-            "--output-last-message",
-            str(output_path),
-            "-C",
-            str(BASE_DIR),
-            "-",
-        ]
-        result = _run(command, prompt=prompt, timeout=timeout)
-        if not output_path.exists():
-            raise AudioNoteError("Codex CLI did not write its structured result")
+    retryable_markers = (
+        "stream disconnected before completion",
+        "Codex CLI did not write its structured result",
+    )
+    max_attempts = 3
+    for attempt in range(1, max_attempts + 1):
         try:
-            structured = json.loads(output_path.read_text())
-        except json.JSONDecodeError as exc:
-            raise AudioNoteError("Codex CLI returned malformed structured JSON") from exc
-    return _object(structured, "OpenAI"), {
-        "provider": "OpenAI",
-        "client": "Codex CLI",
-        "model": OPENAI_MODEL,
-        "stderr_tail": result.stderr.strip()[-500:],
-    }
+            with tempfile.TemporaryDirectory(prefix="mike-pod-codex-") as temporary:
+                root = Path(temporary)
+                schema_path = root / "schema.json"
+                output_path = root / "result.json"
+                schema_path.write_text(json.dumps(schema))
+                command = [
+                    _tool_path("codex"),
+                    "exec",
+                    "-m",
+                    OPENAI_MODEL,
+                    "--sandbox",
+                    "read-only",
+                    "--ephemeral",
+                    "--ignore-user-config",
+                    "--ignore-rules",
+                    "--output-schema",
+                    str(schema_path),
+                    "--output-last-message",
+                    str(output_path),
+                    "-C",
+                    str(BASE_DIR),
+                    "-",
+                ]
+                result = _run(command, prompt=prompt, timeout=timeout)
+                if not output_path.exists():
+                    detail = (result.stderr or result.stdout).strip()[-1200:]
+                    raise AudioNoteError(
+                        "Codex CLI did not write its structured result"
+                        + (f": {detail}" if detail else "")
+                    )
+                try:
+                    structured = json.loads(output_path.read_text())
+                except json.JSONDecodeError as exc:
+                    raise AudioNoteError(
+                        "Codex CLI returned malformed structured JSON"
+                    ) from exc
+            return _object(structured, "OpenAI"), {
+                "provider": "OpenAI",
+                "client": "Codex CLI",
+                "model": OPENAI_MODEL,
+                "attempt_count": attempt,
+                "stderr_tail": result.stderr.strip()[-500:],
+            }
+        except AudioNoteError as exc:
+            retryable = any(marker in str(exc) for marker in retryable_markers)
+            if not retryable or attempt == max_attempts:
+                raise
+            # A fresh ephemeral Codex session is safer than trying to resume a
+            # response whose stream ended before its structured result arrived.
+            time.sleep(2 ** attempt)
+
+    raise AudioNoteError("Codex CLI retry loop ended unexpectedly")
 
 
 def call_claude_cli(
@@ -238,50 +262,60 @@ def call_grok_cli(
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Call Grok through the authenticated Grok CLI with tools disabled."""
 
-    with tempfile.TemporaryDirectory(prefix="mike-pod-grok-") as temporary:
-        prompt_path = Path(temporary) / "prompt.txt"
-        prompt_path.write_text(prompt)
-        command = [
-            _tool_path("grok"),
-            "--prompt-file",
-            str(prompt_path),
-            "--model",
-            GROK_MODEL,
-            "--reasoning-effort",
-            "high",
-            "--output-format",
-            "json",
-            "--json-schema",
-            json.dumps(schema),
-            "--tools",
-            "",
-            "--disable-web-search",
-            "--no-memory",
-            "--no-subagents",
-            "--max-turns",
-            str(GROK_MAX_TURNS),
-            "--permission-mode",
-            "dontAsk",
-            "--verbatim",
-        ]
-        result = _run(command, timeout=timeout)
-    try:
-        envelope = json.loads(result.stdout)
-    except json.JSONDecodeError as exc:
-        raise AudioNoteError("Grok CLI returned malformed JSON") from exc
-    structured = envelope.get("structuredOutput")
-    if structured is None and isinstance(envelope.get("text"), str):
+    max_attempts = 3
+    for attempt in range(1, max_attempts + 1):
+        with tempfile.TemporaryDirectory(prefix="mike-pod-grok-") as temporary:
+            prompt_path = Path(temporary) / "prompt.txt"
+            prompt_path.write_text(prompt)
+            command = [
+                _tool_path("grok"),
+                "--prompt-file",
+                str(prompt_path),
+                "--model",
+                GROK_MODEL,
+                "--reasoning-effort",
+                "high",
+                "--output-format",
+                "json",
+                "--json-schema",
+                json.dumps(schema),
+                "--tools",
+                "",
+                "--disable-web-search",
+                "--no-memory",
+                "--no-subagents",
+                "--max-turns",
+                str(GROK_MAX_TURNS),
+                "--permission-mode",
+                "dontAsk",
+                "--verbatim",
+            ]
+            result = _run(command, timeout=timeout)
         try:
-            structured = json.loads(envelope["text"])
-        except json.JSONDecodeError as exc:
-            raise AudioNoteError("Grok CLI result was not structured JSON") from exc
-    return _object(structured, "Grok"), {
-        "provider": "xAI",
-        "client": "Grok CLI",
-        "model": GROK_MODEL,
-        "usage": envelope.get("usage", {}),
-        "total_cost_usd": envelope.get("total_cost_usd"),
-    }
+            envelope = json.loads(result.stdout)
+            structured = envelope.get("structuredOutput")
+            if structured is None and isinstance(envelope.get("text"), str):
+                structured = json.loads(envelope["text"])
+            structured = _object(structured, "Grok")
+        except (json.JSONDecodeError, AudioNoteError) as exc:
+            if attempt == max_attempts:
+                detail = result.stdout.strip()[-1200:]
+                raise AudioNoteError(
+                    "Grok CLI result was not structured JSON"
+                    + (f": {detail}" if detail else "")
+                ) from exc
+            time.sleep(2 ** attempt)
+            continue
+        return structured, {
+            "provider": "xAI",
+            "client": "Grok CLI",
+            "model": GROK_MODEL,
+            "attempt_count": attempt,
+            "usage": envelope.get("usage", {}),
+            "total_cost_usd": envelope.get("total_cost_usd"),
+        }
+
+    raise AudioNoteError("Grok CLI retry loop ended unexpectedly")
 
 
 def call_grok_research_cli(
@@ -296,54 +330,64 @@ def call_grok_research_cli(
     downloads and snapshots every returned URL independently before synthesis.
     """
 
-    with tempfile.TemporaryDirectory(prefix="mike-pod-grok-research-") as temporary:
-        prompt_path = Path(temporary) / "prompt.txt"
-        prompt_path.write_text(prompt)
-        command = [
-            _tool_path("grok"),
-            "--prompt-file",
-            str(prompt_path),
-            "--model",
-            GROK_MODEL,
-            "--reasoning-effort",
-            "high",
-            "--output-format",
-            "json",
-            "--json-schema",
-            json.dumps(schema),
-            "--tools",
-            "web_search,web_fetch",
-            "--no-memory",
-            "--no-subagents",
-            "--max-turns",
-            str(GROK_MAX_TURNS),
-            # These are read-only network tools. Without this mode the
-            # headless CLI cancels when a search requires tool approval.
-            "--permission-mode",
-            "bypassPermissions",
-            "--verbatim",
-        ]
-        result = _run(command, timeout=timeout)
-    try:
-        envelope = json.loads(result.stdout)
-    except json.JSONDecodeError as exc:
-        raise AudioNoteError("Grok research CLI returned malformed JSON") from exc
-    structured = envelope.get("structuredOutput")
-    if structured is None and isinstance(envelope.get("text"), str):
+    max_attempts = 3
+    for attempt in range(1, max_attempts + 1):
+        with tempfile.TemporaryDirectory(
+            prefix="mike-pod-grok-research-"
+        ) as temporary:
+            prompt_path = Path(temporary) / "prompt.txt"
+            prompt_path.write_text(prompt)
+            command = [
+                _tool_path("grok"),
+                "--prompt-file",
+                str(prompt_path),
+                "--model",
+                GROK_MODEL,
+                "--reasoning-effort",
+                "high",
+                "--output-format",
+                "json",
+                "--json-schema",
+                json.dumps(schema),
+                "--tools",
+                "web_search,web_fetch",
+                "--no-memory",
+                "--no-subagents",
+                "--max-turns",
+                str(GROK_MAX_TURNS),
+                # These are read-only network tools. Without this mode the
+                # headless CLI cancels when a search requires tool approval.
+                "--permission-mode",
+                "bypassPermissions",
+                "--verbatim",
+            ]
+            result = _run(command, timeout=timeout)
         try:
-            structured = json.loads(envelope["text"])
-        except json.JSONDecodeError as exc:
-            raise AudioNoteError(
-                "Grok research CLI result was not structured JSON"
-            ) from exc
-    return _object(structured, "Grok research"), {
-        "provider": "xAI",
-        "client": "Grok CLI",
-        "model": GROK_MODEL,
-        "tools": ["web_search", "web_fetch"],
-        "usage": envelope.get("usage", {}),
-        "total_cost_usd": envelope.get("total_cost_usd"),
-    }
+            envelope = json.loads(result.stdout)
+            structured = envelope.get("structuredOutput")
+            if structured is None and isinstance(envelope.get("text"), str):
+                structured = json.loads(envelope["text"])
+            structured = _object(structured, "Grok research")
+        except (json.JSONDecodeError, AudioNoteError) as exc:
+            if attempt == max_attempts:
+                detail = result.stdout.strip()[-1200:]
+                raise AudioNoteError(
+                    "Grok research CLI result was not structured JSON"
+                    + (f": {detail}" if detail else "")
+                ) from exc
+            time.sleep(2 ** attempt)
+            continue
+        return structured, {
+            "provider": "xAI",
+            "client": "Grok CLI",
+            "model": GROK_MODEL,
+            "tools": ["web_search", "web_fetch"],
+            "attempt_count": attempt,
+            "usage": envelope.get("usage", {}),
+            "total_cost_usd": envelope.get("total_cost_usd"),
+        }
+
+    raise AudioNoteError("Grok research CLI retry loop ended unexpectedly")
 
 
 PROVIDER_CALLS = {

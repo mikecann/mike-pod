@@ -50,6 +50,37 @@ class EnsembleCliTests(unittest.TestCase):
         max_turns_index = command.index("--max-turns") + 1
         self.assertEqual(command[max_turns_index], "12")
         self.assertEqual(metadata["client"], "Grok CLI")
+        self.assertEqual(metadata["attempt_count"], 1)
+
+    def test_grok_audit_retries_malformed_structured_output(self):
+        malformed = CompletedProcess(
+            [],
+            0,
+            stdout=json.dumps({"text": "not json"}),
+            stderr="",
+        )
+        valid = CompletedProcess(
+            [],
+            0,
+            stdout=json.dumps({"structuredOutput": {"ok": True}}),
+            stderr="",
+        )
+        with (
+            patch("ensemble.shutil.which", return_value="/bin/grok"),
+            patch(
+                "ensemble.subprocess.run",
+                side_effect=[malformed, valid],
+            ) as run,
+            patch("ensemble.time.sleep"),
+        ):
+            result, metadata = ensemble.call_grok_cli("audit prompt", SMALL_SCHEMA)
+
+        self.assertEqual(result, {"ok": True})
+        self.assertEqual(run.call_count, 2)
+        self.assertEqual(metadata["attempt_count"], 2)
+        for call in run.call_args_list:
+            self.assertIn("grok-4.6", call.args[0])
+            self.assertIn("--disable-web-search", call.args[0])
 
     def test_openai_uses_sol_in_read_only_ephemeral_codex(self):
         def run_side_effect(command, **kwargs):
@@ -69,6 +100,37 @@ class EnsembleCliTests(unittest.TestCase):
         self.assertIn("read-only", command)
         self.assertIn("--ephemeral", command)
         self.assertEqual(metadata["client"], "Codex CLI")
+        self.assertEqual(metadata["attempt_count"], 1)
+
+    def test_openai_retries_a_disconnected_stream_with_same_model(self):
+        attempts = 0
+
+        def run_side_effect(command, **kwargs):
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                return CompletedProcess(
+                    command,
+                    1,
+                    stdout="",
+                    stderr="ERROR: stream disconnected before completion",
+                )
+            output_index = command.index("--output-last-message") + 1
+            Path(command[output_index]).write_text(json.dumps({"ok": True}))
+            return CompletedProcess(command, 0, stdout="", stderr="")
+
+        with (
+            patch("ensemble.shutil.which", return_value="/bin/codex"),
+            patch("ensemble.subprocess.run", side_effect=run_side_effect) as run,
+            patch("ensemble.time.sleep"),
+        ):
+            result, metadata = ensemble.call_openai_cli("prompt", SMALL_SCHEMA)
+
+        self.assertEqual(result, {"ok": True})
+        self.assertEqual(run.call_count, 2)
+        self.assertEqual(metadata["attempt_count"], 2)
+        for call in run.call_args_list:
+            self.assertIn("gpt-5.6-sol", call.args[0])
 
     def test_grok_research_enables_only_web_tools(self):
         envelope = {"structuredOutput": {"ok": True}, "usage": {"input_tokens": 1}}
@@ -87,6 +149,38 @@ class EnsembleCliTests(unittest.TestCase):
         self.assertEqual(command[tools_index], "web_search,web_fetch")
         self.assertNotIn("--disable-web-search", command)
         self.assertEqual(metadata["tools"], ["web_search", "web_fetch"])
+        self.assertEqual(metadata["attempt_count"], 1)
+
+    def test_grok_research_retries_malformed_structured_output(self):
+        malformed = CompletedProcess(
+            [],
+            0,
+            stdout=json.dumps({"text": "not json"}),
+            stderr="",
+        )
+        valid = CompletedProcess(
+            [],
+            0,
+            stdout=json.dumps({"structuredOutput": {"ok": True}}),
+            stderr="",
+        )
+        with (
+            patch("ensemble.shutil.which", return_value="/bin/grok"),
+            patch(
+                "ensemble.subprocess.run",
+                side_effect=[malformed, valid],
+            ) as run,
+            patch("ensemble.time.sleep"),
+        ):
+            result, metadata = ensemble.call_grok_research_cli(
+                "search prompt", SMALL_SCHEMA
+            )
+
+        self.assertEqual(result, {"ok": True})
+        self.assertEqual(run.call_count, 2)
+        self.assertEqual(metadata["attempt_count"], 2)
+        for call in run.call_args_list:
+            self.assertIn("grok-4.6", call.args[0])
 
     def test_topic_decision_is_recorded_with_all_panel_members(self):
         candidates = [{"id": "space", "topic": "Space"}]

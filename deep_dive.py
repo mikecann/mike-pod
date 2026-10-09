@@ -59,6 +59,7 @@ PUBLIC_FEED_URL = "https://podcast.mikecann.app/feed.xml"
 DEFAULT_PLANNER_MODEL = f"openai/{OPENAI_MODEL}"
 DEFAULT_DISCOVERY_MODEL = GROK_MODEL
 DEFAULT_SYNTHESIS_MODEL = f"openai/{OPENAI_MODEL}"
+SOURCE_SNAPSHOT_MAX_CHARS = 50_000
 
 
 def call_sol(
@@ -901,7 +902,10 @@ def snapshot_sources(
         fetch_errors: list[str] = []
         for fetch_url in _fetchable_urls(candidate["url"]):
             try:
-                text = fetch_live_article(fetch_url, max_chars=24_000)
+                text = fetch_live_article(
+                    fetch_url,
+                    max_chars=SOURCE_SNAPSHOT_MAX_CHARS,
+                )
                 break
             except AudioNoteError as exc:
                 fetch_errors.append(str(exc))
@@ -909,7 +913,7 @@ def snapshot_sources(
             error = " | ".join(fetch_errors) or "No fetch URL was available"
             highlight = str(candidate.get("search_highlight") or "").strip()
             if len(highlight) >= 250:
-                text = highlight[:24_000]
+                text = highlight[:SOURCE_SNAPSHOT_MAX_CHARS]
                 snapshot_kind = "search_highlight"
             else:
                 snapshot_kind = "unavailable"
@@ -956,7 +960,10 @@ def refresh_thin_arxiv_sources(
         if not fetch_urls or "ar5iv.labs.arxiv.org" not in fetch_urls[0]:
             continue
         try:
-            text = fetch_live_article(fetch_urls[0], max_chars=24_000)
+            text = fetch_live_article(
+                fetch_urls[0],
+                max_chars=SOURCE_SNAPSHOT_MAX_CHARS,
+            )
         except AudioNoteError:
             continue
         if len(text) <= int(source.get("snapshot_characters") or 0):

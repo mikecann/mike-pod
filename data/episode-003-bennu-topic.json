@@ -1,0 +1,20 @@
+{
+  "enduring_interests": [],
+  "active_prompts": [
+    {
+      "id": "episode-003-bennu-origins",
+      "topic": "Did asteroid delivery materially improve the odds of life beginning on early Earth, or did Bennu merely preserve ingredients Earth could make for itself?",
+      "status": "unpublished",
+      "angles": [
+        "Start with the practical causal test: abundance, delivery flux, atmospheric-entry survival, chemical availability and comparison with plausible terrestrial production.",
+        "Use current primary OSIRIS-REx sample-analysis papers and official mission documentation, and distinguish pristine returned material from meteorites exposed to Earth.",
+        "Compare Bennu with independent Hayabusa2 Ryugu sample results and carbonaceous meteorites, auditing overlapping teams and methods rather than treating every paper as replication.",
+        "Trace the history from panspermia to prebiotic-feedstock delivery, including Miller-Urey as a terrestrial alternative, Murchison's contamination problem and ALH84001 as a caution against overinterpreting suggestive extraterrestrial material.",
+        "Separate amino acids, nucleobases, ammonia, sugars and ancient-brine minerals from evidence of life. Explain isotope ratios, chirality, racemic mixtures and contamination controls before relying on them.",
+        "Include important sceptical or opposing primary work on abiotic formation, atmospheric-entry survival, delivery quantities and early-Earth availability.",
+        "Treat very recent sugar or related findings as provisional unless the full primary paper and independent scrutiny are available.",
+        "End with measurements that could discriminate the competing accounts, including isotopes, chirality, cross-laboratory aliquot analysis and samples from chemically distinct bodies."
+      ]
+    }
+  ]
+}

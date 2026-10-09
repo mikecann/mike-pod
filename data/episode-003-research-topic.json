@@ -1,0 +1,18 @@
+{
+  "enduring_interests": [],
+  "active_prompts": [
+    {
+      "id": "episode-003-regeneration-evidence",
+      "topic": "When tissue is cut, rearranged or transiently bioelectrically altered yet still builds or regenerates a coherent body, what evidence distinguishes a stored target morphology from ordinary local feedback, and which planarian, xenobot and anthrobot experiments actually meet that test?",
+      "status": "unpublished",
+      "angles": [
+        "The evidence packet must include the accessible primary Xenobot construction paper at https://pmc.ncbi.nlm.nih.gov/articles/PMC6994979/ and the primary kinematic self-replication paper at https://pmc.ncbi.nlm.nih.gov/articles/PMC8670470/.",
+        "Include the primary Xenobot 2.0 cellular-platform paper or its author-hosted full text at https://livingrobotswarms.github.io/img/xenobots2.pdf, and distinguish designed movement, spontaneous self-assembly, wound response and kinematic replication from claims about cognition or a stored body target.",
+        "Include at least one independent peer-reviewed critical or philosophy-of-biology framework for goal-directedness, representation or basal cognition, plus the proponents' own operational definition.",
+        "Treat the planarian cryptic-recutting result as single-laboratory evidence unless an independent replication or failed replication is actually located.",
+        "Do not make clinical-translation claims unless a clinical-trial or translational search directly supports them; otherwise state that this question was not audited.",
+        "Prefer full-text primary or archival sources whose results and controls can be independently snapshotted, not publisher abstracts."
+      ]
+    }
+  ]
+}

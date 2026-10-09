@@ -1,3 +1,4 @@
+import argparse
 import json
 import shutil
 import sys
@@ -19,6 +20,7 @@ from episode import (
     audit_prompt,
     combine_script_audits,
     correction_prompt,
+    critique_revision_prompt,
     correction_versions,
     episode_names,
     incomplete_correction_version,
@@ -96,6 +98,14 @@ class EpisodeGateTests(unittest.TestCase):
         self.assertIn("Do not restructure the episode", compact_prompt)
         self.assertIn("final third at least as accessible", compact_prompt)
         self.assertIn("Claude Fable and Grok", compact_prompt)
+
+    def test_critique_revision_is_mandatory_even_after_clean_reviews(self):
+        prompt = critique_revision_prompt({}, {}, [], {}, {"approved": True})
+        compact_prompt = " ".join(prompt.split())
+
+        self.assertIn("clean issue arrays", compact_prompt)
+        self.assertIn("not permission to skip this Sol revision", compact_prompt)
+        self.assertIn("fresh final audit", compact_prompt)
 
     def test_script_panel_requires_both_clean_approvals(self):
         clean = {
@@ -263,6 +273,191 @@ class EpisodeGateTests(unittest.TestCase):
 
             with patch.object(episode, "RELEASES_DIR", releases):
                 validate_episode_identity(release, identity, resume=False)
+
+    def test_resume_reuses_saved_draft_and_restarts_first_peer_audit(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            releases = root / "releases"
+            releases.mkdir()
+            dossier = self.write_dossier(root, "dossier")
+            manifest = [
+                {
+                    "source_id": "S01",
+                    "title": "Primary source",
+                    "url": "https://example.com/source",
+                    "source_type": "primary",
+                    "stance": "supports",
+                    "why_relevant": "Supports the episode.",
+                    "usable_for_synthesis": True,
+                }
+            ]
+            (dossier / "source_manifest.json").write_text(json.dumps(manifest))
+            release = releases / "episode-003-saved-draft"
+            release.mkdir()
+            saved_draft = {
+                "episode_title": "Saved draft",
+                "subtitle": "Subtitle",
+                "summary": "Summary",
+                "script": " ".join(["clear"] * 950),
+                "sections": [
+                    {
+                        "title": "Section",
+                        "summary": "Summary",
+                        "source_ids": ["S01"],
+                    }
+                ],
+                "key_takeaways": ["Takeaway"],
+                "featured_source_ids": ["S01"],
+            }
+            identity = make_episode_identity(3, "saved-draft", dossier.resolve())
+            (release / IDENTITY_FILENAME).write_text(json.dumps(identity))
+            (release / "draft.json").write_text(json.dumps(saved_draft))
+            clean_peer = {
+                "approved": True,
+                "factual_issues": [],
+                "calibration_issues": [],
+                "personalisation_issues": [],
+                "accessibility_issues": [],
+                "required_edits": [],
+                "assessment": "Clean",
+            }
+            combined = combine_script_audits(
+                {"claude": clean_peer, "grok": clean_peer}
+            )
+            show_artwork = root / "show.jpg"
+            show_artwork.write_bytes(b"show artwork")
+            args = argparse.Namespace(
+                dossier_dir=dossier,
+                episode_number=3,
+                revision=1,
+                episode_slug="saved-draft",
+                episode_artwork=None,
+                output_dir=release,
+                writer_model=episode.WRITER_MODEL,
+                draft_only=True,
+                resume=True,
+            )
+
+            revised_draft = dict(saved_draft, summary="Revised summary")
+            with (
+                patch.object(episode, "RELEASES_DIR", releases),
+                patch.object(episode, "SHOW_ARTWORK", show_artwork),
+                patch.object(
+                    episode,
+                    "run_script_audit_panel",
+                    side_effect=[
+                        (
+                            combined,
+                            {"claude": clean_peer, "grok": clean_peer},
+                            {"claude": {}, "grok": {}},
+                        ),
+                        (
+                            combined,
+                            {"claude": clean_peer, "grok": clean_peer},
+                            {"claude": {}, "grok": {}},
+                        ),
+                    ],
+                ) as audit_panel,
+                patch.object(
+                    episode,
+                    "call_sol",
+                    return_value=(revised_draft, {"model": "gpt-5.6-sol"}),
+                ) as sol,
+            ):
+                self.assertEqual(episode.generate(args), 0)
+
+            self.assertEqual(audit_panel.call_count, 2)
+            sol.assert_called_once()
+            self.assertEqual(
+                json.loads((release / "package.json").read_text()),
+                revised_draft,
+            )
+            self.assertTrue((release / "audit_fable_v1.json").exists())
+            self.assertTrue((release / "audit_grok_v1.json").exists())
+            self.assertTrue((release / "audit_fable_v2.json").exists())
+            self.assertTrue((release / "audit_grok_v2.json").exists())
+
+    def test_resume_keeps_the_approved_canonical_package(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            releases = root / "releases"
+            releases.mkdir()
+            dossier = self.write_dossier(root, "dossier")
+            manifest = [
+                {
+                    "source_id": "S01",
+                    "title": "Primary source",
+                    "url": "https://example.com/source",
+                    "source_type": "primary",
+                    "stance": "supports",
+                    "why_relevant": "Supports the episode.",
+                    "usable_for_synthesis": True,
+                }
+            ]
+            (dossier / "source_manifest.json").write_text(json.dumps(manifest))
+            release = releases / "episode-003-approved"
+            release.mkdir()
+            identity = make_episode_identity(3, "approved", dossier.resolve())
+            (release / IDENTITY_FILENAME).write_text(json.dumps(identity))
+
+            approved = {
+                "episode_title": "Approved package",
+                "subtitle": "Subtitle",
+                "summary": "Canonical summary",
+                "script": " ".join(["approved"] * 500),
+                "sections": [
+                    {
+                        "title": "Section",
+                        "summary": "Summary",
+                        "source_ids": ["S01"],
+                    }
+                ],
+                "key_takeaways": ["Takeaway"],
+                "featured_source_ids": ["S01"],
+            }
+            stale_revision = dict(approved, summary="Stale intermediate")
+            clean_audit = {
+                "approved": True,
+                "factual_issues": [],
+                "calibration_issues": [],
+                "personalisation_issues": [],
+                "accessibility_issues": [],
+                "required_edits": [],
+                "assessment": "Clean",
+            }
+            (release / "package.json").write_text(json.dumps(approved))
+            (release / "audit.json").write_text(json.dumps(clean_audit))
+            (release / "revision_from_critiques.json").write_text(
+                json.dumps(stale_revision)
+            )
+            show_artwork = root / "show.jpg"
+            show_artwork.write_bytes(b"show artwork")
+            args = argparse.Namespace(
+                dossier_dir=dossier,
+                episode_number=3,
+                revision=1,
+                episode_slug="approved",
+                episode_artwork=None,
+                output_dir=release,
+                writer_model=episode.WRITER_MODEL,
+                draft_only=True,
+                resume=True,
+            )
+
+            with (
+                patch.object(episode, "RELEASES_DIR", releases),
+                patch.object(episode, "SHOW_ARTWORK", show_artwork),
+                patch.object(episode, "call_sol") as sol,
+                patch.object(episode, "run_script_audit_panel") as audit_panel,
+            ):
+                self.assertEqual(episode.generate(args), 0)
+
+            sol.assert_not_called()
+            audit_panel.assert_not_called()
+            self.assertEqual(
+                json.loads((release / "package.json").read_text()),
+                approved,
+            )
 
     def test_episode_artwork_must_be_3000_square_jpeg(self):
         with tempfile.TemporaryDirectory() as temporary:
